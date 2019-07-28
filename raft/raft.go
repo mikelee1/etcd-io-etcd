@@ -115,18 +115,18 @@ func (st StateType) String() string {
 type Config struct {
 	// ID is the identity of the local raft. ID cannot be 0.
 	ID uint64
-
+	//mike 只有新创建raft集群的时候才可以设定，重启时不可设定
 	// peers contains the IDs of all nodes (including self) in the raft cluster. It
 	// should only be set when starting a new raft cluster. Restarting raft from
 	// previous configuration will panic if peers is set. peer is private and only
 	// used for testing right now.
 	peers []uint64
-
+	//mike raft集群中所有的learner节点
 	// learners contains the IDs of all learner nodes (including self if the
 	// local node is a learner) in the raft cluster. learners only receives
 	// entries from the leader node. It does not vote or promote itself.
 	learners []uint64
-
+	//mike 超时选举的时间设置，建议是心跳间隔的10倍
 	// ElectionTick is the number of Node.Tick invocations that must pass between
 	// elections. That is, if a follower does not receive any message from the
 	// leader of current term before ElectionTick has elapsed, it will become
@@ -134,11 +134,12 @@ type Config struct {
 	// HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid
 	// unnecessary leader switching.
 	ElectionTick int
+	//mike leader的心跳设置
 	// HeartbeatTick is the number of Node.Tick invocations that must pass between
 	// heartbeats. That is, a leader sends heartbeat messages to maintain its
 	// leadership every HeartbeatTick ticks.
 	HeartbeatTick int
-
+	//mike raft的数据库，可以保存entries、states、configuration等
 	// Storage is the storage for raft. raft generates entries and states to be
 	// stored in storage. raft reads the persisted entries and states out of
 	// Storage when it needs. raft reads out the previous state and configuration
@@ -174,7 +175,7 @@ type Config struct {
 	// CheckQuorum specifies if the leader should check quorum activity. Leader
 	// steps down when quorum is not active for an electionTimeout.
 	CheckQuorum bool
-
+	//mike 预投票用来处理迷失的节点重新加入集群
 	// PreVote enables the Pre-Vote algorithm described in raft thesis section
 	// 9.6. This prevents disruption when a node that has been partitioned away
 	// rejoins the cluster.
@@ -192,11 +193,11 @@ type Config struct {
 	// in that case.
 	// CheckQuorum MUST be enabled if ReadOnlyOption is ReadOnlyLeaseBased.
 	ReadOnlyOption ReadOnlyOption
-
+	//mike 打印的实例
 	// Logger is the logger used for raft log. For multinode which can host
 	// multiple raft group, each raft group can have its own logger
 	Logger Logger
-
+	//mike 是否开启follower向leader传递请求的功能
 	// DisableProposalForwarding set to true means that followers will drop
 	// proposals, rather than forwarding them to the leader. One use case for
 	// this feature would be in a situation where the Raft leader is used to
@@ -207,7 +208,7 @@ type Config struct {
 	// to the leader.
 	DisableProposalForwarding bool
 }
-
+//mike 检查验证
 func (c *Config) validate() error {
 	if c.ID == None {
 		return errors.New("cannot use none as id")
@@ -216,7 +217,7 @@ func (c *Config) validate() error {
 	if c.HeartbeatTick <= 0 {
 		return errors.New("heartbeat tick must be greater than 0")
 	}
-
+	//mike 选举间隔一定是大于等于心跳间隔
 	if c.ElectionTick <= c.HeartbeatTick {
 		return errors.New("election tick must be greater than heartbeat tick")
 	}
@@ -238,7 +239,7 @@ func (c *Config) validate() error {
 	if c.MaxInflightMsgs <= 0 {
 		return errors.New("max inflight messages must be greater than 0")
 	}
-
+	//mike 这里设置了c.Logger,一个interface
 	if c.Logger == nil {
 		c.Logger = raftLogger
 	}
@@ -249,7 +250,7 @@ func (c *Config) validate() error {
 
 	return nil
 }
-
+//mike 故事从这里开始
 type raft struct {
 	id uint64
 
@@ -257,7 +258,7 @@ type raft struct {
 	Vote uint64
 
 	readStates []ReadState
-
+	//mike 记录log日志的struct
 	// the log
 	raftLog *raftLog
 
@@ -313,29 +314,35 @@ type raft struct {
 	disableProposalForwarding bool
 
 	tick func()
+	//mike 状态机函数
 	step stepFunc
 
 	logger Logger
 }
-
+//mike 生成raft实例
 func newRaft(c *Config) *raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
+	//mike 获取一个raftLog实例
 	raftlog := newLogWithSize(c.Storage, c.Logger, c.MaxCommittedSizePerReady)
+	//mike 获取storage的hardstate和confstate
 	hs, cs, err := c.Storage.InitialState()
 	if err != nil {
 		panic(err) // TODO(bdarnell)
 	}
+	//mike peers和learners是什么概念，peer是正常节点，可以投票和升级，learner没有投票和升级的功能
 	peers := c.peers
 	learners := c.learners
+	//mike 如果历史有节点信息
 	if len(cs.Voters) > 0 || len(cs.Learners) > 0 {
-		if len(peers) > 0 || len(learners) > 0 {
+		if len(peers) > 0 || len(learners) > 0 {//mike 新配置的节点信息不为空，则panic
 			// TODO(bdarnell): the peers argument is always nil except in
 			// tests; the argument should be removed and these tests should be
 			// updated to specify their nodes through a snapshot.
 			panic("cannot specify both newRaft(peers, learners) and ConfState.(Voters, Learners)")
 		}
+		//mike 否则用历史赋值现在
 		peers = cs.Voters
 		learners = cs.Learners
 	}
@@ -355,6 +362,7 @@ func newRaft(c *Config) *raft {
 		readOnly:                  newReadOnly(c.ReadOnlyOption),
 		disableProposalForwarding: c.DisableProposalForwarding,
 	}
+	//mike？？
 	for _, p := range peers {
 		// Add node to active config.
 		r.applyConfChange(pb.ConfChange{Type: pb.ConfChangeAddNode, NodeID: p}.AsV2())
@@ -393,7 +401,7 @@ func (r *raft) hardState() pb.HardState {
 		Commit: r.raftLog.committed,
 	}
 }
-
+//mike send用来保存msg到msgs，raft集群的节点间发送心跳等
 // send persists state to stable storage and then sends to its mailbox.
 func (r *raft) send(m pb.Message) {
 	m.From = r.id
@@ -500,7 +508,7 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	r.send(m)
 	return true
 }
-
+//mike 构造心跳的message并调用send函数
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 	// Attach the commit as min(to.matched, r.committed).
@@ -541,7 +549,7 @@ func (r *raft) bcastHeartbeat() {
 		r.bcastHeartbeatWithCtx([]byte(lastCtx))
 	}
 }
-
+//mike 包装了context
 func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
 	r.prs.Visit(func(id uint64, _ *tracker.Progress) {
 		if id == r.id {
@@ -682,7 +690,7 @@ func (r *raft) tickHeartbeat() {
 	if r.state != StateLeader {
 		return
 	}
-
+	//mike 如果心跳包超时，则发送心跳并重置heartbeatElapsed为0
 	if r.heartbeatElapsed >= r.heartbeatTimeout {
 		r.heartbeatElapsed = 0
 		r.Step(pb.Message{From: r.id, Type: pb.MsgBeat})
@@ -690,9 +698,9 @@ func (r *raft) tickHeartbeat() {
 }
 
 func (r *raft) becomeFollower(term uint64, lead uint64) {
-	r.step = stepFollower
+	r.step = stepFollower//mike 是一个function
 	r.reset(term)
-	r.tick = r.tickElection
+	r.tick = r.tickElection //mike etcdserver_tick->node_tick->raft_tick
 	r.lead = lead
 	r.state = StateFollower
 	r.logger.Infof("%x became follower at term %d", r.id, r.Term)
@@ -773,6 +781,7 @@ func (r *raft) campaign(t CampaignType) {
 	}
 	var term uint64
 	var voteMsg pb.MessageType
+	//mike 根据campaign的类型转变node角色
 	if t == campaignPreElection {
 		r.becomePreCandidate()
 		voteMsg = pb.MsgPreVote
@@ -787,12 +796,14 @@ func (r *raft) campaign(t CampaignType) {
 		// We won the election after voting for ourselves (which must mean that
 		// this is a single-node cluster). Advance to the next state.
 		if t == campaignPreElection {
-			r.campaign(campaignElection)
+			//mike PreVote算法解决了网络分区节点在重新加入时，会中断集群的问题
+			r.campaign(campaignElection)//mike 再去进行campaignElection
 		} else {
 			r.becomeLeader()
 		}
 		return
 	}
+	//mike？？没懂这步干嘛
 	for id := range r.prs.Voters.IDs() {
 		if id == r.id {
 			continue
@@ -807,7 +818,7 @@ func (r *raft) campaign(t CampaignType) {
 		r.send(pb.Message{Term: term, To: id, Type: voteMsg, Index: r.raftLog.lastIndex(), LogTerm: r.raftLog.lastTerm(), Context: ctx})
 	}
 }
-
+//mike 统计投票结果
 func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected int, result quorum.VoteResult) {
 	if v {
 		r.logger.Infof("%x received %s from %x at term %d", r.id, t, id, r.Term)
@@ -817,7 +828,7 @@ func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected 
 	r.prs.RecordVote(id, v)
 	return r.prs.TallyVotes()
 }
-
+//mike raft的重要函数Step，多看几遍，通过此函数和raft集群中的其他节点进行交互，包括心跳、选举等
 func (r *raft) Step(m pb.Message) error {
 	// Handle the message term, which may result in our stepping down to a follower.
 	switch {
@@ -847,7 +858,7 @@ func (r *raft) Step(m pb.Message) error {
 		default:
 			r.logger.Infof("%x [term: %d] received a %s message with higher term from %x [term: %d]",
 				r.id, r.Term, m.Type, m.From, m.Term)
-			if m.Type == pb.MsgApp || m.Type == pb.MsgHeartbeat || m.Type == pb.MsgSnap {
+			if m.Type == pb.MsgApp || m.Type == pb.MsgHeartbeat || m.Type == pb.MsgSnap {//mike？？ 如果是msgapp、heartbeat、snap三者之一，则变为follower
 				r.becomeFollower(m.Term, m.From)
 			} else {
 				r.becomeFollower(m.Term, None)
@@ -893,8 +904,8 @@ func (r *raft) Step(m pb.Message) error {
 		return nil
 	}
 
-	switch m.Type {
-	case pb.MsgHup:
+	switch m.Type {//检查msg的类型
+	case pb.MsgHup://mike 提升该node的身份
 		if r.state != StateLeader {
 			if !r.promotable() {
 				r.logger.Warningf("%x is unpromotable and can not campaign; ignoring MsgHup", r.id)
@@ -904,6 +915,7 @@ func (r *raft) Step(m pb.Message) error {
 			if err != nil {
 				r.logger.Panicf("unexpected error getting unapplied entries (%v)", err)
 			}
+			//mike 如果该节点还有配置变更的没有写入状态机的话，那么他没有资格发起选举。
 			if n := numOfPendingConf(ents); n != 0 && r.raftLog.committed > r.raftLog.applied {
 				r.logger.Warningf("%x cannot campaign at term %d since there are still %d pending configuration changes to apply", r.id, r.Term, n)
 				return nil
@@ -911,6 +923,7 @@ func (r *raft) Step(m pb.Message) error {
 
 			r.logger.Infof("%x is starting a new election at term %d", r.id, r.Term)
 			if r.preVote {
+				//mike 参加竞选
 				r.campaign(campaignPreElection)
 			} else {
 				r.campaign(campaignElection)
@@ -918,7 +931,7 @@ func (r *raft) Step(m pb.Message) error {
 		} else {
 			r.logger.Debugf("%x ignoring MsgHup because already leader", r.id)
 		}
-
+	//mike PreVote算法解决了网络分区节点在重新加入时，会中断集群的问题
 	case pb.MsgVote, pb.MsgPreVote:
 		if r.isLearner {
 			// TODO: learner may need to vote, in case of node down when confchange.
@@ -967,7 +980,7 @@ func (r *raft) Step(m pb.Message) error {
 }
 
 type stepFunc func(r *raft, m pb.Message) error
-
+//mike leader的处理函数
 func stepLeader(r *raft, m pb.Message) error {
 	// These message types do not require any progress for m.From.
 	switch m.Type {
@@ -1219,7 +1232,7 @@ func stepLeader(r *raft, m pb.Message) error {
 	}
 	return nil
 }
-
+//mike 候选人的处理函数
 // stepCandidate is shared by StateCandidate and StatePreCandidate; the difference is
 // whether they respond to MsgVoteResp or MsgPreVoteResp.
 func stepCandidate(r *raft, m pb.Message) error {
@@ -1266,7 +1279,7 @@ func stepCandidate(r *raft, m pb.Message) error {
 	}
 	return nil
 }
-
+//mike follower的处理函数
 func stepFollower(r *raft, m pb.Message) error {
 	switch m.Type {
 	case pb.MsgProp:
@@ -1339,7 +1352,7 @@ func (r *raft) handleAppendEntries(m pb.Message) {
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: m.Index, Reject: true, RejectHint: r.raftLog.lastIndex()})
 	}
 }
-
+//mike 供candidate和follower调用的处理leader心跳的函数
 func (r *raft) handleHeartbeat(m pb.Message) {
 	r.raftLog.commitTo(m.Commit)
 	r.send(pb.Message{To: m.From, Type: pb.MsgHeartbeatResp, Context: m.Context})
@@ -1429,7 +1442,7 @@ func (r *raft) restore(s pb.Snapshot) bool {
 		r.id, r.raftLog.committed, r.raftLog.lastIndex(), r.raftLog.lastTerm(), s.Metadata.Index, s.Metadata.Term)
 	return true
 }
-
+//mike 检查该node是否可以提权，其中progress中维护了集群中node信息的hash表
 // promotable indicates whether state machine can be promoted to leader,
 // which is true when its own id is in progress list.
 func (r *raft) promotable() bool {

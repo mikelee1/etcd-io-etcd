@@ -178,6 +178,7 @@ func (c MajorityConfig) CommittedIndex(l AckedIndexer) Index {
 // yes/no has been reached), won (a quorum of yes has been reached), or lost (a
 // quorum of no has been reached).
 func (c MajorityConfig) VoteResult(votes map[uint64]bool) VoteResult {
+	//mike？？这里没懂
 	if len(c) == 0 {
 		// By convention, the elections on an empty config win. This comes in
 		// handy with joint quorums because it'll make a half-populated joint

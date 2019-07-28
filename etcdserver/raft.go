@@ -165,7 +165,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 			select {
 			case <-r.ticker.C:
 				r.tick()
-			case rd := <-r.Ready():
+			case rd := <-r.Ready()://mike 这里监听着node发过来的ready消息，包含各种message，n.readyc的流向是raft->etcdserver
 				if rd.SoftState != nil {
 					newLeader := rd.SoftState.Lead != raft.None && rh.getLead() != rd.SoftState.Lead
 					if newLeader {
@@ -223,6 +223,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				// For more details, check raft thesis 10.2.1
 				if islead {
 					// gofail: var raftBeforeLeaderSend struct{}
+					//mike 由etcd的server端发送raft的消息到raft集群中其他节点
 					r.transport.Send(r.processMessages(rd.Messages))
 				}
 
@@ -301,7 +302,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					// leader already processed 'MsgSnap' and signaled
 					notifyc <- struct{}{}
 				}
-
+				//mike 调用Advance告诉raft，这批状态更新处理完了，状态已经演进了，可以给我下一批Ready让我处理
 				r.Advance()
 			case <-r.stopped:
 				return
@@ -495,8 +496,9 @@ func restartNode(cfg ServerConfig, snapshot *raftpb.Snapshot) (types.ID, *member
 	if snapshot != nil {
 		walsnap.Index, walsnap.Term = snapshot.Metadata.Index, snapshot.Metadata.Term
 	}
+	//mike id是node的id，cid是cluster的id
 	w, id, cid, st, ents := readWAL(cfg.Logger, cfg.WALDir(), walsnap)
-
+	fmt.Println("w, id, cid, st, ents are:", id, cid)
 	if cfg.Logger != nil {
 		cfg.Logger.Info(
 			"restarting local member",

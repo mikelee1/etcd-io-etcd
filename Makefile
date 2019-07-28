@@ -15,6 +15,8 @@ build:
 	GO_BUILD_FLAGS="-v" ./build
 	./bin/etcd --version
 	./bin/etcdctl version
+	cp ./bin/etcd /usr/local/bin
+	cp ./bin/etcdctl /usr/local/bin
 
 clean:
 	rm -f ./codecov

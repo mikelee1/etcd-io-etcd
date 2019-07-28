@@ -13,7 +13,7 @@
 // limitations under the License.
 
 package quorum
-
+//mike 在更新raft集群信息时，需要同时维持旧的和新的，避免硬切换
 // JointConfig is a configuration of two groups of (possibly overlapping)
 // majority configurations. Decisions require the support of both majorities.
 type JointConfig [2]MajorityConfig

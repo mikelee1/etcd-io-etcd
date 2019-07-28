@@ -346,6 +346,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 
 	switch {
 	case !haveWAL && !cfg.NewCluster:
+		fmt.Println("!haveWAL && !cfg.NewCluster")
 		if err = cfg.VerifyJoinExisting(); err != nil {
 			return nil, err
 		}
@@ -372,6 +373,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl.SetID(id, existingCluster.ID())
 
 	case !haveWAL && cfg.NewCluster:
+		fmt.Println("!haveWAL && cfg.NewCluster")
 		if err = cfg.VerifyBootstrap(); err != nil {
 			return nil, err
 		}
@@ -406,7 +408,8 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		id, n, s, w = startNode(cfg, cl, cl.MemberIDs())
 		cl.SetID(id, cl.ID())
 
-	case haveWAL:
+	case haveWAL://mike 有历史存档的情况
+		fmt.Println("haveWAL")
 		if err = fileutil.IsDirWriteable(cfg.MemberDir()); err != nil {
 			return nil, fmt.Errorf("cannot write to member directory: %v", err)
 		}
@@ -426,6 +429,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 			}
 		}
 		snapshot, err = ss.Load()
+		fmt.Println("snapshot,",snapshot)
 		if err != nil && err != snap.ErrNoSnapshot {
 			return nil, err
 		}
@@ -627,6 +631,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	}
 	for _, m := range cl.Members() {
 		if m.ID != id {
+			//mike 在本地保存一份node节点信息表
 			tr.AddPeer(m.ID, m.PeerURLs)
 		}
 	}
@@ -1649,7 +1654,7 @@ func (s *EtcdServer) PromoteMember(ctx context.Context, id uint64) ([]*membershi
 	// fails with ErrNotLeader, forward the request to leader node via HTTP. If promoteMember call fails with error
 	// other than ErrNotLeader, return the error.
 	resp, err := s.promoteMember(ctx, id)
-	if err == nil {
+	if err == nil {//mike 提权成功
 		learnerPromoteSucceed.Inc()
 		return resp, nil
 	}
@@ -1922,6 +1927,7 @@ func (s *EtcdServer) configure(ctx context.Context, cc raftpb.ConfChange) ([]*me
 	ch := s.w.Register(cc.ID)
 
 	start := time.Now()
+	//mike 提议修改raft的配置
 	if err := s.r.ProposeConfChange(ctx, cc); err != nil {
 		s.w.Trigger(cc.ID, nil)
 		return nil, err

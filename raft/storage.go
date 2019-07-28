@@ -36,7 +36,7 @@ var ErrUnavailable = errors.New("requested entry at index is unavailable")
 // ErrSnapshotTemporarilyUnavailable is returned by the Storage interface when the required
 // snapshot is temporarily unavailable.
 var ErrSnapshotTemporarilyUnavailable = errors.New("snapshot is temporarily unavailable")
-
+//mike 操作storage的接口
 // Storage is an interface that may be implemented by the application
 // to retrieve log entries from storage.
 //
@@ -166,7 +166,7 @@ func (ms *MemoryStorage) Snapshot() (pb.Snapshot, error) {
 	defer ms.Unlock()
 	return ms.snapshot, nil
 }
-
+//mike 使用snapshot去覆盖现在掉storage
 // ApplySnapshot overwrites the contents of this Storage object with
 // those of the given snapshot.
 func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {

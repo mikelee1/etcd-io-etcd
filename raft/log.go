@@ -50,7 +50,7 @@ type raftLog struct {
 func newLog(storage Storage, logger Logger) *raftLog {
 	return newLogWithSize(storage, logger, noLimit)
 }
-
+//mike 根据storage和size返回raftLog实例，注意storage和raftLog的关系，raftLog包含storage和logger
 // newLogWithSize returns a log using the given storage and max
 // message size.
 func newLogWithSize(storage Storage, logger Logger, maxNextEntsSize uint64) *raftLog {

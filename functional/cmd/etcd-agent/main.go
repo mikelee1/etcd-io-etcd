@@ -39,7 +39,7 @@ func main() {
 	flag.Parse()
 
 	defer logger.Sync()
-
+	//mike etcd的最开始
 	srv := agent.NewServer(logger, *network, *address)
 	err := srv.StartServe()
 	logger.Info("agent exiting", zap.Error(err))

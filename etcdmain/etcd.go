@@ -129,6 +129,7 @@ func startEtcdOrProxyV2() {
 	var errc <-chan error
 
 	which := identifyDataDirOrDie(cfg.ec.GetLogger(), cfg.ec.Dir)
+	fmt.Println(which)//第一次为empty，后面是member
 	if which != dirEmpty {
 		if lg != nil {
 			lg.Info(
@@ -281,6 +282,7 @@ func startEtcdOrProxyV2() {
 	// for accepting connections. The etcd instance should be
 	// joined with the cluster and ready to serve incoming
 	// connections.
+	fmt.Println("notifySystemd")
 	notifySystemd(lg)
 
 	select {
@@ -306,7 +308,9 @@ func startEtcd(cfg *embed.Config) (<-chan struct{}, <-chan error, error) {
 	osutil.RegisterInterruptHandler(e.Close)
 	select {
 	case <-e.Server.ReadyNotify(): // wait for e.Server to join the cluster
+		fmt.Println("joined cluster")
 	case <-e.Server.StopNotify(): // publish aborted from 'ErrStopped'
+		fmt.Println("errstopped")
 	}
 	return e.Server.StopNotify(), e.Err(), nil
 }

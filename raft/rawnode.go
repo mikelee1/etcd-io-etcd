@@ -176,7 +176,7 @@ func (rn *RawNode) Advance(rd Ready) {
 	if !IsEmptyHardState(rd.HardState) {
 		rn.prevHardSt = rd.HardState
 	}
-	rn.raft.advance(rd)
+	rn.raft.advance(rd)//mike 用来append entries
 }
 
 // Status returns the current status of the given group. This allocates, see

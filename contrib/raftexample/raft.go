@@ -222,7 +222,7 @@ func (rc *raftNode) openWAL(snapshot *raftpb.Snapshot) *wal.WAL {
 
 	return w
 }
-
+//mike 利用snapshot对storage进行重放
 // replayWAL replays WAL entries into the raft instance.
 func (rc *raftNode) replayWAL() *wal.WAL {
 	log.Printf("replaying WAL of member %d", rc.id)
@@ -239,7 +239,7 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 	rc.raftStorage.SetHardState(st)
 
 	// append to storage so raft starts at the right place in log
-	rc.raftStorage.Append(ents)
+	rc.raftStorage.Append(ents)//mike 载入entries
 	// send nil once lastIndex is published so client knows commit channel is current
 	if len(ents) > 0 {
 		rc.lastIndex = ents[len(ents)-1].Index

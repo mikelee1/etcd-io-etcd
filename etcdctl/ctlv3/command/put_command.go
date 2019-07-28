@@ -77,6 +77,7 @@ func putCommandFunc(cmd *cobra.Command, args []string) {
 }
 
 func getPutOp(args []string) (string, string, []clientv3.OpOption) {
+	fmt.Println("args:",args)
 	if len(args) == 0 {
 		ExitWithError(ExitBadArgs, fmt.Errorf("put command needs 1 argument and input from stdin or 2 arguments"))
 	}

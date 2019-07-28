@@ -185,6 +185,7 @@ func (t *Transport) Send(msgs []raftpb.Message) {
 		to := types.ID(m.To)
 
 		t.mu.RLock()
+		//mike 记录了peers和remotes
 		p, pok := t.peers[to]
 		g, rok := t.remotes[to]
 		t.mu.RUnlock()
@@ -299,7 +300,7 @@ func (t *Transport) AddRemote(id types.ID, us []string) {
 		)
 	}
 }
-
+//mike 向peers的map表中新加节点信息
 func (t *Transport) AddPeer(id types.ID, us []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -535,7 +535,7 @@ func (s *EtcdServer) raftRequestOnce(ctx context.Context, r pb.InternalRaftReque
 	}
 	return result.resp, nil
 }
-
+//mike etcd server端调用raft共识
 func (s *EtcdServer) raftRequest(ctx context.Context, r pb.InternalRaftRequest) (proto.Message, error) {
 	for {
 		resp, err := s.raftRequestOnce(ctx, r)
