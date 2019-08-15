@@ -20,15 +20,21 @@ import (
 
 	pb "go.etcd.io/etcd/raft/raftpb"
 )
-
+//mike log处理的枢纽
+//mike raft日志相关的代码，比如保存日志记录
 type raftLog struct {
+
+	// log ----------------------------------------------------------------
+	//         stable   |<-first       storage      last->|    unstable
+	//            applied\committed
+
 	// storage contains all stable entries since the last snapshot.
 	storage Storage
 
 	// unstable contains all unstable entries and snapshot.
 	// they will be saved into storage.
 	unstable unstable
-
+	//mike storage中存储的稳定log最大index值
 	// committed is the highest log position that is known to be in
 	// stable storage on a quorum of nodes.
 	committed uint64
@@ -137,7 +143,7 @@ func (l *raftLog) findConflict(ents []pb.Entry) uint64 {
 	}
 	return 0
 }
-
+//mike 获取unstable的entries
 func (l *raftLog) unstableEntries() []pb.Entry {
 	if len(l.unstable.entries) == 0 {
 		return nil
@@ -186,9 +192,11 @@ func (l *raftLog) firstIndex() uint64 {
 }
 
 func (l *raftLog) lastIndex() uint64 {
+	//mike 从unstable或者snapshot中获取lastindex
 	if i, ok := l.unstable.maybeLastIndex(); ok {
 		return i
 	}
+	//mike storage的lastindex
 	i, err := l.storage.LastIndex()
 	if err != nil {
 		panic(err) // TODO(bdarnell)
@@ -295,7 +303,7 @@ func (l *raftLog) maybeCommit(maxIndex, term uint64) bool {
 	}
 	return false
 }
-
+//mike 将snapshot放入unstable
 func (l *raftLog) restore(s pb.Snapshot) {
 	l.logger.Infof("log [%s] starts to restore snapshot [index: %d, term: %d]", l, s.Metadata.Index, s.Metadata.Term)
 	l.committed = s.Metadata.Index

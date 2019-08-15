@@ -86,6 +86,7 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 
 	rc := &raftNode{
 		proposeC:    proposeC,
+		//mike 这个confchangec的流入是restapi那里
 		confChangeC: confChangeC,
 		commitC:     commitC,
 		errorC:      errorC,
@@ -233,6 +234,7 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 		log.Fatalf("raftexample: failed to read WAL (%v)", err)
 	}
 	rc.raftStorage = raft.NewMemoryStorage()
+	//mike 根据快照、entry日志等恢复当前raft节点到之前的状态
 	if snapshot != nil {
 		rc.raftStorage.ApplySnapshot(*snapshot)
 	}
@@ -377,7 +379,7 @@ func (rc *raftNode) maybeTriggerSnapshot() {
 	log.Printf("compacted log at index %d", compactIndex)
 	rc.snapshotIndex = rc.appliedIndex
 }
-
+//mike etcd server端的处理
 func (rc *raftNode) serveChannels() {
 	snap, err := rc.raftStorage.Snapshot()
 	if err != nil {
@@ -402,16 +404,18 @@ func (rc *raftNode) serveChannels() {
 				if !ok {
 					rc.proposeC = nil
 				} else {
+					//mike 阻塞直到有返回
 					// blocks until accepted by raft state machine
 					rc.node.Propose(context.TODO(), []byte(prop))
 				}
 
-			case cc, ok := <-rc.confChangeC:
+			case cc, ok := <-rc.confChangeC://mike 收到add或者delete node的请求
 				if !ok {
 					rc.confChangeC = nil
 				} else {
 					confChangeCount++
 					cc.ID = confChangeCount
+					//mike 发送到node请求修改配置块
 					rc.node.ProposeConfChange(context.TODO(), cc)
 				}
 			}
@@ -424,8 +428,9 @@ func (rc *raftNode) serveChannels() {
 	for {
 		select {
 		case <-ticker.C:
+			//mike node Tick一次
 			rc.node.Tick()
-
+		//mike Ready封装了可以准备开始读取的entries、messages，需要保存到持久化介质、同步给其他节点
 		// store raft entries to wal, then publish over commit channel
 		case rd := <-rc.node.Ready():
 			rc.wal.Save(rd.HardState, rd.Entries)
@@ -441,6 +446,7 @@ func (rc *raftNode) serveChannels() {
 				return
 			}
 			rc.maybeTriggerSnapshot()
+			//mike 通知节点，表明本轮Ready已经处理完毕，可以开始处理下一轮
 			rc.node.Advance()
 
 		case err := <-rc.transport.ErrorC:

@@ -23,6 +23,7 @@ import pb "go.etcd.io/etcd/raft/raftpb"
 type unstable struct {
 	// the incoming unstable snapshot, if any.
 	snapshot *pb.Snapshot
+	//mike 管理着未被写入storage的entries
 	// all entries that have not yet been written to storage.
 	entries []pb.Entry
 	offset  uint64

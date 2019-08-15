@@ -241,7 +241,7 @@ func memberUpdateCommandFunc(cmd *cobra.Command, args []string) {
 
 	display.MemberUpdate(id, *resp)
 }
-
+//mike 获取member列表
 // memberListCommandFunc executes the "member list" command.
 func memberListCommandFunc(cmd *cobra.Command, args []string) {
 	ctx, cancel := commandCtx(cmd)

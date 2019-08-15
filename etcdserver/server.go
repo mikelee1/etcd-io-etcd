@@ -62,6 +62,7 @@ import (
 	humanize "github.com/dustin/go-humanize"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+	"go.etcd.io/etcd/common/tickprint"
 )
 
 const (
@@ -195,6 +196,7 @@ type EtcdServer struct {
 	// consistIndex used to hold the offset of current executing entry
 	// It is initialized to 0 before executing any entry.
 	consistIndex consistentIndex // must use atomic operations to access; keep 64-bit aligned.
+	//mike server和raft交流的实例
 	r            raftNode        // uses 64-bit atomics; keep 64-bit aligned.
 
 	readych chan struct{}
@@ -345,7 +347,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	)
 
 	switch {
-	case !haveWAL && !cfg.NewCluster:
+	case !haveWAL && !cfg.NewCluster://mike 没有wal并且是旧cluster
 		fmt.Println("!haveWAL && !cfg.NewCluster")
 		if err = cfg.VerifyJoinExisting(); err != nil {
 			return nil, err
@@ -369,18 +371,24 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl.SetID(types.ID(0), existingCluster.ID())
 		cl.SetStore(st)
 		cl.SetBackend(be)
+		//mike peers为nil
 		id, n, s, w = startNode(cfg, cl, nil)
 		cl.SetID(id, existingCluster.ID())
 
-	case !haveWAL && cfg.NewCluster:
+	case !haveWAL && cfg.NewCluster://mike 没有wal并且是新cluster
 		fmt.Println("!haveWAL && cfg.NewCluster")
 		if err = cfg.VerifyBootstrap(); err != nil {
 			return nil, err
 		}
+		//cfg.InitialPeerURLsMap:
+		//docker-node1=http://127.0.0.1:12380,docker-node2=http://127.0.0.1:22380,docker-node3=http://127.0.0.1:32380
+
+		//mike 根据InitialPeerURLsMap创建cluster，下面有启动
 		cl, err = membership.NewClusterFromURLsMap(cfg.Logger, cfg.InitialClusterToken, cfg.InitialPeerURLsMap)
 		if err != nil {
 			return nil, err
 		}
+		//mike 根据name从cluster中获取member克隆的实例
 		m := cl.MemberByName(cfg.Name)
 		if isMemberBootstrapped(cfg.Logger, cl, cfg.Name, prt, cfg.bootstrapTimeout()) {
 			return nil, fmt.Errorf("member %s has already been bootstrapped", m.ID)
@@ -403,12 +411,15 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 				return nil, err
 			}
 		}
+		//mike 设置store
 		cl.SetStore(st)
+		//mike 设置backend
 		cl.SetBackend(be)
+		//mike cl.MemberIDs包含了这个cluster的所有节点id，cl包含集群信息
 		id, n, s, w = startNode(cfg, cl, cl.MemberIDs())
 		cl.SetID(id, cl.ID())
 
-	case haveWAL://mike 有历史存档的情况
+	case haveWAL://mike 有历史存档的情况，restart
 		fmt.Println("haveWAL")
 		if err = fileutil.IsDirWriteable(cfg.MemberDir()); err != nil {
 			return nil, fmt.Errorf("cannot write to member directory: %v", err)
@@ -497,6 +508,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	lstats := stats.NewLeaderStats(id.String())
 
 	heartbeat := time.Duration(cfg.TickMs) * time.Millisecond
+	//mike 后面基本都是构建etcdserver
 	srv = &EtcdServer{
 		readych:     make(chan struct{}),
 		Cfg:         cfg,
@@ -505,10 +517,11 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		errorc:      make(chan error, 1),
 		v2store:     st,
 		snapshotter: ss,
-		r: *newRaftNode(
+		r: *newRaftNode(//mike important
 			raftNodeConfig{
 				lg:          cfg.Logger,
 				isIDRemoved: func(id uint64) bool { return cl.IsIDRemoved(types.ID(id)) },
+				//mike 启动协程的node绑定到server上
 				Node:        n,
 				heartbeat:   heartbeat,
 				raftStorage: s,
@@ -605,7 +618,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 			srv.raftRequestOnce(ctx, pb.InternalRaftRequest{LeaseCheckpoint: cp})
 		})
 	}
-
+	//mike 新建transport
 	// TODO: move transport initialization near the definition of remote
 	tr := &rafthttp.Transport{
 		Logger:      cfg.Logger,
@@ -724,7 +737,7 @@ func (s *EtcdServer) adjustTicks() {
 		}
 	}
 }
-
+//mike start etcd的服务端
 // Start performs any initialization of the Server necessary for it to
 // begin serving requests. It must be called before Do or Process.
 // Start must be non-blocking; any long-running server functionality
@@ -739,7 +752,7 @@ func (s *EtcdServer) Start() {
 	s.goAttach(s.linearizableReadLoop)
 	s.goAttach(s.monitorKVHash)
 }
-
+//mike etcd server准备工作，最后一步开启
 // start prepares and starts server in a new goroutine. It is no longer safe to
 // modify a server's fields after it has been sent to Start.
 // This function is just used for testing.
@@ -768,7 +781,7 @@ func (s *EtcdServer) start() {
 		}
 		s.Cfg.SnapshotCatchUpEntries = DefaultSnapshotCatchUpEntries
 	}
-
+	//mike 一堆chan
 	s.w = wait.New()
 	s.applyWait = wait.NewTimeList()
 	s.done = make(chan struct{})
@@ -806,6 +819,7 @@ func (s *EtcdServer) start() {
 
 	// TODO: if this is an empty log, writes all peer infos
 	// into the first entry
+	//mike 开启server的协程
 	go s.run()
 }
 
@@ -862,7 +876,7 @@ func (s *EtcdServer) LeaseHandler() http.Handler {
 }
 
 func (s *EtcdServer) RaftHandler() http.Handler { return s.r.transport.Handler() }
-
+//mike 实现了transport的接口，用于处理transport收到的msgs
 // Process takes a raft message and applies it to the server's raft state
 // machine, respecting any timeout of the given context.
 func (s *EtcdServer) Process(ctx context.Context, m raftpb.Message) error {
@@ -883,11 +897,11 @@ func (s *EtcdServer) Process(ctx context.Context, m raftpb.Message) error {
 	}
 	return s.r.Step(ctx, m)
 }
-
+//mike 实现了transport的接口
 func (s *EtcdServer) IsIDRemoved(id uint64) bool { return s.cluster.IsIDRemoved(types.ID(id)) }
-
+//mike 实现了transport的接口
 func (s *EtcdServer) ReportUnreachable(id uint64) { s.r.ReportUnreachable(id) }
-
+//mike 实现了transport的接口
 // ReportSnapshot reports snapshot sent status to the raft state machine,
 // and clears the used snapshot from the snapshot store.
 func (s *EtcdServer) ReportSnapshot(id uint64, status raft.SnapshotStatus) {
@@ -911,6 +925,7 @@ type raftReadyHandler struct {
 	updateCommittedIndex func(uint64)
 }
 
+//mike 开启etcd server
 func (s *EtcdServer) run() {
 	lg := s.getLogger()
 
@@ -985,6 +1000,7 @@ func (s *EtcdServer) run() {
 			}
 		},
 	}
+	//mike raftnode start
 	s.r.start(rh)
 
 	ep := etcdProgress{
@@ -1038,7 +1054,11 @@ func (s *EtcdServer) run() {
 
 	for {
 		select {
-		case ap := <-s.r.apply():
+		case ap := <-s.r.apply()://mike raft的applyc，这里的apply其实是server传给raft共识以后的msg
+			for _, v := range ap.entries{
+				go tickprint.Print(v.Type,"got raft apply: "+string(v.Data))
+			}
+
 			f := func(context.Context) { s.applyAll(&ep, &ap) }
 			sched.Schedule(f)
 		case leases := <-expiredLeaseC:
@@ -1091,7 +1111,7 @@ func (s *EtcdServer) run() {
 		}
 	}
 }
-
+//mike 对日志进行操作
 func (s *EtcdServer) applyAll(ep *etcdProgress, apply *apply) {
 	s.applySnapshot(ep, apply)
 	s.applyEntries(ep, apply)
@@ -1329,6 +1349,7 @@ func (s *EtcdServer) applySnapshot(ep *etcdProgress, apply *apply) {
 		if m.ID == s.ID() {
 			continue
 		}
+		//mike 恢复peer的状态
 		s.r.transport.AddPeer(m.ID, m.PeerURLs)
 	}
 
@@ -1587,7 +1608,7 @@ func (s *EtcdServer) AddMember(ctx context.Context, memb membership.Member) ([]*
 		Context: b,
 	}
 
-	if memb.IsLearner {
+	if memb.IsLearner {//mike 加入的是learner节点
 		cc.Type = raftpb.ConfChangeAddLearnerNode
 	}
 
@@ -1630,7 +1651,7 @@ func (s *EtcdServer) mayAddMember(memb membership.Member) error {
 
 	return nil
 }
-
+//mike etcd的server端构造请求发向raft
 func (s *EtcdServer) RemoveMember(ctx context.Context, id uint64) ([]*membership.Member, error) {
 	if err := s.checkMembershipOperationPermission(ctx); err != nil {
 		return nil, err
@@ -1918,7 +1939,7 @@ type confChangeResponse struct {
 	membs []*membership.Member
 	err   error
 }
-
+//mike 发向raft并等待confchange的结果
 // configure sends a configuration change through consensus and
 // then waits for it to be applied to the server. It
 // will block until the change is performed or there is an error.
@@ -1927,14 +1948,14 @@ func (s *EtcdServer) configure(ctx context.Context, cc raftpb.ConfChange) ([]*me
 	ch := s.w.Register(cc.ID)
 
 	start := time.Now()
-	//mike 提议修改raft的配置
+	//mike 通过server的raftnode提议修改raft的配置
 	if err := s.r.ProposeConfChange(ctx, cc); err != nil {
 		s.w.Trigger(cc.ID, nil)
 		return nil, err
 	}
 
 	select {
-	case x := <-ch:
+	case x := <-ch://mike 等待结果
 		if x == nil {
 			if lg := s.getLogger(); lg != nil {
 				lg.Panic("failed to configure")
@@ -2099,7 +2120,7 @@ func (s *EtcdServer) sendMergedSnap(merged snap.Message) {
 		}
 	})
 }
-
+//mike apply entries
 // apply takes entries received from Raft (after it has been committed) and
 // applies them to the current state of the EtcdServer.
 // The given entries should not be empty.
@@ -2230,7 +2251,7 @@ func (s *EtcdServer) applyEntryNormal(e *raftpb.Entry) {
 		s.w.Trigger(id, ar)
 	})
 }
-
+//mike server端对提议通过的conf进行修改
 // applyConfChange applies a ConfChange to the server. It is only
 // invoked with a ConfChange that has already passed through Raft
 func (s *EtcdServer) applyConfChange(cc raftpb.ConfChange, confState *raftpb.ConfState) (bool, error) {
@@ -2266,9 +2287,11 @@ func (s *EtcdServer) applyConfChange(cc raftpb.ConfChange, confState *raftpb.Con
 		if confChangeContext.IsPromote {
 			s.cluster.PromoteMember(confChangeContext.Member.ID)
 		} else {
+			//mike raftcluster添加成员
 			s.cluster.AddMember(&confChangeContext.Member)
 
 			if confChangeContext.Member.ID != s.id {
+				//mike 添加peer到集群中
 				s.r.transport.AddPeer(confChangeContext.Member.ID, confChangeContext.PeerURLs)
 			}
 		}
@@ -2282,7 +2305,7 @@ func (s *EtcdServer) applyConfChange(cc raftpb.ConfChange, confState *raftpb.Con
 			}
 		}
 
-	case raftpb.ConfChangeRemoveNode:
+	case raftpb.ConfChangeRemoveNode://mike 移除节点
 		id := types.ID(cc.NodeID)
 		s.cluster.RemoveMember(id)
 		if id == s.id {

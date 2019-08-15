@@ -22,10 +22,9 @@ import (
 	"github.com/coreos/go-systemd/daemon"
 	"go.uber.org/zap"
 )
-
+//mike etcd build的函数入口
 func Main() {
 	checkSupportArch()
-	fmt.Println(os.Args)
 	if len(os.Args) > 1 {
 		cmd := os.Args[1]
 		if covArgs := os.Getenv("ETCDCOV_ARGS"); len(covArgs) > 0 {
@@ -43,7 +42,7 @@ func Main() {
 		}
 	}
 
-	startEtcdOrProxyV2()
+	startEtcdOrProxyV2()//mike 开始etcd
 }
 
 func notifySystemd(lg *zap.Logger) {

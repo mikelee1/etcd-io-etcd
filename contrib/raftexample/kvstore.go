@@ -28,6 +28,7 @@ import (
 type kvstore struct {
 	proposeC    chan<- string // channel for proposing updates
 	mu          sync.RWMutex
+	//mike 保存提交的kv值，供get和put
 	kvStore     map[string]string // current committed key-value pairs
 	snapshotter *snap.Snapshotter
 }

@@ -20,6 +20,7 @@ import (
 
 	"go.etcd.io/etcd/etcdserver/api/v2store"
 	pb "go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"fmt"
 )
 
 type RequestV2 pb.Request
@@ -78,6 +79,7 @@ func (a *reqV2HandlerStore) Head(ctx context.Context, r *RequestV2) (Response, e
 }
 
 func (a *reqV2HandlerEtcdServer) Post(ctx context.Context, r *RequestV2) (Response, error) {
+	fmt.Println("post! ")
 	return a.processRaftRequest(ctx, r)
 }
 
@@ -101,6 +103,7 @@ func (a *reqV2HandlerEtcdServer) processRaftRequest(ctx context.Context, r *Requ
 	ch := a.s.w.Register(r.ID)
 
 	start := time.Now()
+	//mike etcd的client发来请求转化为raft的请求
 	a.s.r.Propose(ctx, data)
 	proposalsPending.Inc()
 	defer proposalsPending.Dec()
@@ -139,6 +142,7 @@ func (s *EtcdServer) Do(ctx context.Context, r pb.Request) (Response, error) {
 // respective operation. Do will block until an action is performed or there is
 // an error.
 func (r *RequestV2) Handle(ctx context.Context, v2api RequestV2Handler) (Response, error) {
+	fmt.Println("handle: ",r.Method)
 	if r.Method == "GET" && r.Quorum {
 		r.Method = "QGET"
 	}

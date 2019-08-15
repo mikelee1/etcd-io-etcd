@@ -23,7 +23,7 @@
 package main
 
 import "go.etcd.io/etcd/etcdmain"
-
+//mike 程序启动的最开始
 func main() {
 	etcdmain.Main()
 }

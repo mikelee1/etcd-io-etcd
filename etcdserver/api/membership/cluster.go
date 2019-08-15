@@ -55,6 +55,7 @@ type RaftCluster struct {
 
 	sync.Mutex // guards the fields below
 	version    *semver.Version
+	//mike 包含raft的各个成员
 	members    map[types.ID]*Member
 	// removed contains the ids of removed members in the cluster.
 	// removed id cannot be reused.
@@ -69,7 +70,7 @@ type ConfigChangeContext struct {
 	// uses the same config change type 'ConfChangeAddNode'.
 	IsPromote bool `json:"isPromote"`
 }
-
+//mike 根据urlmap去创建集群
 // NewClusterFromURLsMap creates a new raft cluster using provided urls map. Currently, it does not support creating
 // cluster with raft learner member.
 func NewClusterFromURLsMap(lg *zap.Logger, token string, urlsmap types.URLsMap) (*RaftCluster, error) {
@@ -107,7 +108,7 @@ func NewCluster(lg *zap.Logger, token string) *RaftCluster {
 }
 
 func (c *RaftCluster) ID() types.ID { return c.cid }
-
+//mike 获取该raft集群的所有成员节点
 func (c *RaftCluster) Members() []*Member {
 	c.Lock()
 	defer c.Unlock()
@@ -372,7 +373,7 @@ func (c *RaftCluster) ValidateConfigurationChange(cc raftpb.ConfChange) error {
 	}
 	return nil
 }
-
+//mike raft中添加成员
 // AddMember adds a new Member into the cluster, and saves the given member's
 // raftAttributes into the store. The given member should have empty attributes.
 // A Member with a matching id must not exist.
@@ -400,7 +401,7 @@ func (c *RaftCluster) AddMember(m *Member) {
 		plog.Infof("added member %s %v to cluster %s", m.ID, m.PeerURLs, c.cid)
 	}
 }
-
+//mike raft中删除成员
 // RemoveMember removes a member from the store.
 // The given id MUST exist, or the function panics.
 func (c *RaftCluster) RemoveMember(id types.ID) {

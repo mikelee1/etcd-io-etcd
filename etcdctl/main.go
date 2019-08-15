@@ -32,10 +32,11 @@ func main() {
 	// unset apiEnv to avoid side-effect for future env and flag parsing.
 	os.Unsetenv(apiEnv)
 	if len(apiv) == 0 || apiv == "3" {
+		fmt.Println("v3")
 		ctlv3.Start()
 		return
 	}
-
+	fmt.Println("v2")
 	if apiv == "2" {
 		ctlv2.Start()
 		return

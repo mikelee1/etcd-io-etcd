@@ -19,6 +19,7 @@ import (
 
 	pb "go.etcd.io/etcd/raft/raftpb"
 	"go.etcd.io/etcd/raft/tracker"
+	"fmt"
 )
 
 // ErrStepLocalMsg is returned when try to step a local raft message
@@ -27,11 +28,12 @@ var ErrStepLocalMsg = errors.New("raft: cannot step raft local message")
 // ErrStepPeerNotFound is returned when try to step a response message
 // but there is no peer found in raft.prs for that node.
 var ErrStepPeerNotFound = errors.New("raft: cannot step as peer not found")
-
+//mike rawnode是线程非安全的
 // RawNode is a thread-unsafe Node.
 // The methods of this struct correspond to the methods of Node and are described
 // more fully there.
 type RawNode struct {
+	//mike 包含了操作raft集群的句柄
 	raft       *raft
 	prevSoftSt *SoftState
 	prevHardSt pb.HardState
@@ -48,6 +50,7 @@ func NewRawNode(config *Config) (*RawNode, error) {
 	if config.ID == 0 {
 		panic("config.ID must not be zero")
 	}
+	//mike 生成raft实例
 	r := newRaft(config)
 	rn := &RawNode{
 		raft: r,
@@ -73,14 +76,14 @@ func (rn *RawNode) Tick() {
 func (rn *RawNode) TickQuiesced() {
 	rn.raft.electionElapsed++
 }
-
+//mike 转为候选人模式
 // Campaign causes this RawNode to transition to candidate state.
 func (rn *RawNode) Campaign() error {
 	return rn.raft.Step(pb.Message{
 		Type: pb.MsgHup,
 	})
 }
-
+//mike 向raft集群发送提议
 // Propose proposes data be appended to the raft log.
 func (rn *RawNode) Propose(data []byte) error {
 	return rn.raft.Step(pb.Message{
@@ -93,6 +96,7 @@ func (rn *RawNode) Propose(data []byte) error {
 
 // ProposeConfChange proposes a config change. See (Node).ProposeConfChange for
 // details.
+//mike 向raft集群提议修改配置项
 func (rn *RawNode) ProposeConfChange(cc pb.ConfChangeI) error {
 	m, err := confChangeToMsg(cc)
 	if err != nil {
@@ -132,6 +136,7 @@ func (rn *RawNode) Ready() Ready {
 // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
 // is no obligation that the Ready must be handled.
 func (rn *RawNode) readyWithoutAccept() Ready {
+	fmt.Println("in readyWithoutAccept")
 	return newReady(rn.raft, rn.prevSoftSt, rn.prevHardSt)
 }
 
@@ -162,6 +167,7 @@ func (rn *RawNode) HasReady() bool {
 		return true
 	}
 	if len(r.msgs) > 0 || len(r.raftLog.unstableEntries()) > 0 || r.raftLog.hasNextEnts() {
+		fmt.Println("hasready: len(r.msgs) is ",len(r.msgs))
 		return true
 	}
 	if len(r.readStates) != 0 {

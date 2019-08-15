@@ -63,7 +63,7 @@ type ServerConfig struct {
 
 	// BackendFreelistType is the type of the backend boltdb freelist.
 	BackendFreelistType bolt.FreelistType
-
+	//mike 用于恢复集群的members
 	InitialPeerURLsMap  types.URLsMap
 	InitialClusterToken string
 	NewCluster          bool

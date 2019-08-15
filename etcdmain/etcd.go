@@ -55,11 +55,13 @@ var (
 
 func startEtcdOrProxyV2() {
 	grpc.EnableTracing = false
-
+	//mike 新建一个config句柄
 	cfg := newConfig()
+	//mike default=http://localhost:2380
 	defaultInitialCluster := cfg.ec.InitialCluster
-
+	//mike parse输入的参数
 	err := cfg.parse(os.Args[1:])
+	fmt.Println("defaultInitialCluster: ",defaultInitialCluster)
 	lg := cfg.ec.GetLogger()
 	if err != nil {
 		if lg != nil {
@@ -93,7 +95,7 @@ func startEtcdOrProxyV2() {
 			logger.Sync()
 		}
 	}()
-
+	//mike 再次检验config
 	defaultHost, dhErr := (&cfg.ec).UpdateDefaultClusterFromName(defaultInitialCluster)
 	if defaultHost != "" {
 		if lg != nil {
@@ -124,13 +126,13 @@ func startEtcdOrProxyV2() {
 			plog.Warningf("no data-dir provided, using default data-dir ./%s", cfg.ec.Dir)
 		}
 	}
-
+	//mike 管理主进程的chan信号
 	var stopped <-chan struct{}
 	var errc <-chan error
 
 	which := identifyDataDirOrDie(cfg.ec.GetLogger(), cfg.ec.Dir)
 	fmt.Println(which)//第一次为empty，后面是member
-	if which != dirEmpty {
+	if which != dirEmpty {//not empty
 		if lg != nil {
 			lg.Info(
 				"server has been already initialized",
@@ -140,9 +142,9 @@ func startEtcdOrProxyV2() {
 		} else {
 			plog.Noticef("the server is already initialized as %v before, starting as etcd %v...", which, which)
 		}
-		switch which {
+		switch which {//mike member/proxy/empty
 		case dirMember:
-			stopped, errc, err = startEtcd(&cfg.ec)
+			stopped, errc, err = startEtcd(&cfg.ec)//mike 返回的stopped和errc在进程中阻塞等待
 		case dirProxy:
 			err = startProxy(cfg)
 		default:
@@ -284,7 +286,7 @@ func startEtcdOrProxyV2() {
 	// connections.
 	fmt.Println("notifySystemd")
 	notifySystemd(lg)
-
+	//mike 阻塞在此，除非退出
 	select {
 	case lerr := <-errc:
 		// fatal out on listener errors
@@ -301,17 +303,19 @@ func startEtcdOrProxyV2() {
 
 // startEtcd runs StartEtcd in addition to hooks needed for standalone etcd.
 func startEtcd(cfg *embed.Config) (<-chan struct{}, <-chan error, error) {
-	e, err := embed.StartEtcd(cfg)
+	e, err := embed.StartEtcd(cfg)//mike 根据config进行start后返回etcd的实例
 	if err != nil {
 		return nil, nil, err
 	}
 	osutil.RegisterInterruptHandler(e.Close)
 	select {
+	//mike 阻塞直到etcd集群可用
 	case <-e.Server.ReadyNotify(): // wait for e.Server to join the cluster
 		fmt.Println("joined cluster")
 	case <-e.Server.StopNotify(): // publish aborted from 'ErrStopped'
 		fmt.Println("errstopped")
 	}
+	//mike 返回进程的阻塞通道stop和err
 	return e.Server.StopNotify(), e.Err(), nil
 }
 

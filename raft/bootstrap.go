@@ -19,7 +19,7 @@ import (
 
 	pb "go.etcd.io/etcd/raft/raftpb"
 )
-
+//mike 初始化raft集群
 // Bootstrap initializes the RawNode for first use by appending configuration
 // changes for the supplied peers. This method returns an error if the Storage
 // is nonempty.
@@ -36,7 +36,7 @@ func (rn *RawNode) Bootstrap(peers []Peer) error {
 		return err
 	}
 
-	if lastIndex != 0 {
+	if lastIndex != 0 {//mike 非空storage的话，返回错误
 		return errors.New("can't bootstrap a nonempty Storage")
 	}
 
@@ -49,6 +49,7 @@ func (rn *RawNode) Bootstrap(peers []Peer) error {
 	// bootstrap the initial membership in a cleaner way.
 	rn.raft.becomeFollower(1, None)
 	ents := make([]pb.Entry, len(peers))
+	//mike 有多少个peer，就有多少entry去addnode
 	for i, peer := range peers {
 		cc := pb.ConfChange{Type: pb.ConfChangeAddNode, NodeID: peer.ID, Context: peer.Context}
 		data, err := cc.Marshal()

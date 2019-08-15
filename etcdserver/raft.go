@@ -35,6 +35,7 @@ import (
 	"go.etcd.io/etcd/wal"
 	"go.etcd.io/etcd/wal/walpb"
 	"go.uber.org/zap"
+	"go.etcd.io/etcd/common/tickprint"
 )
 
 const (
@@ -166,6 +167,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 			case <-r.ticker.C:
 				r.tick()
 			case rd := <-r.Ready()://mike 这里监听着node发过来的ready消息，包含各种message，n.readyc的流向是raft->etcdserver
+				fmt.Println("got ready from raft")
 				if rd.SoftState != nil {
 					newLeader := rd.SoftState.Lead != raft.None && rh.getLead() != rd.SoftState.Lead
 					if newLeader {
@@ -209,7 +211,9 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					snapshot: rd.Snapshot,
 					notifyc:  notifyc,
 				}
-
+				for _,v := range ap.entries{
+					go tickprint.Print("raftnode ap: ", string(v.Data))
+				}
 				updateCommittedIndex(&ap, rh)
 
 				select {
@@ -226,7 +230,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					//mike 由etcd的server端发送raft的消息到raft集群中其他节点
 					r.transport.Send(r.processMessages(rd.Messages))
 				}
-
+				//mike 保存entries等
 				// gofail: var raftBeforeSave struct{}
 				if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
 					if r.lg != nil {
@@ -265,6 +269,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				r.raftStorage.Append(rd.Entries)
 
 				if !islead {
+					fmt.Println("send msg to peer")
 					// finish processing incoming messages before we signal raftdone chan
 					msgs := r.processMessages(rd.Messages)
 
@@ -297,6 +302,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					}
 
 					// gofail: var raftBeforeFollowerSend struct{}
+					//mike 将raft发送来的msgs发送给peers
 					r.transport.Send(msgs)
 				} else {
 					// leader already processed 'MsgSnap' and signaled
@@ -417,7 +423,7 @@ func (r *raftNode) advanceTicks(ticks int) {
 		r.tick()
 	}
 }
-
+//mike 开启raft node节点
 func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id types.ID, n raft.Node, s *raft.MemoryStorage, w *wal.WAL) {
 	var err error
 	member := cl.MemberByName(cfg.Name)
@@ -427,6 +433,7 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 			ClusterID: uint64(cl.ID()),
 		},
 	)
+	//mike 创建wal文件夹等
 	if w, err = wal.Create(cfg.Logger, cfg.WALDir(), metadata); err != nil {
 		if cfg.Logger != nil {
 			cfg.Logger.Panic("failed to create WAL", zap.Error(err))
@@ -434,6 +441,7 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 			plog.Panicf("create wal error: %v", err)
 		}
 	}
+	//mike 获取raft节点
 	peers := make([]raft.Peer, len(ids))
 	for i, id := range ids {
 		var ctx []byte
@@ -457,6 +465,7 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 	} else {
 		plog.Infof("starting member %s in cluster %s", id, cl.ID())
 	}
+	//mike 构造一个storage实例
 	s = raft.NewMemoryStorage()
 	c := &raft.Config{
 		ID:              uint64(id),
@@ -480,9 +489,9 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 		}
 	}
 
-	if len(peers) == 0 {
+	if len(peers) == 0 {//mike 重启raft集群中的node
 		n = raft.RestartNode(c)
-	} else {
+	} else {//mike 新建raft集群并启动其中的node，这里的peers相当于是让node知道有哪些peer在集群里
 		n = raft.StartNode(c, peers)
 	}
 	raftStatusMu.Lock()
@@ -490,15 +499,16 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 	raftStatusMu.Unlock()
 	return id, n, s, w
 }
-
+//mike 重启节点：读取wal文件
 func restartNode(cfg ServerConfig, snapshot *raftpb.Snapshot) (types.ID, *membership.RaftCluster, raft.Node, *raft.MemoryStorage, *wal.WAL) {
 	var walsnap walpb.Snapshot
 	if snapshot != nil {
 		walsnap.Index, walsnap.Term = snapshot.Metadata.Index, snapshot.Metadata.Term
 	}
 	//mike id是node的id，cid是cluster的id
+	//mike 从waldir中获取entries
 	w, id, cid, st, ents := readWAL(cfg.Logger, cfg.WALDir(), walsnap)
-	fmt.Println("w, id, cid, st, ents are:", id, cid)
+	fmt.Println(" id, cid are:", id, cid)
 	if cfg.Logger != nil {
 		cfg.Logger.Info(
 			"restarting local member",
@@ -509,12 +519,16 @@ func restartNode(cfg ServerConfig, snapshot *raftpb.Snapshot) (types.ID, *member
 	} else {
 		plog.Infof("restarting member %s in cluster %s at commit index %d", id, cid, st.Commit)
 	}
+	//mike 新建一个cluster
 	cl := membership.NewCluster(cfg.Logger, "")
 	cl.SetID(id, cid)
+	//mike 新建storage的实例
 	s := raft.NewMemoryStorage()
 	if snapshot != nil {
+		//mike 重放snapshot
 		s.ApplySnapshot(*snapshot)
 	}
+	//mike 设置storage的hardstate
 	s.SetHardState(st)
 	s.Append(ents)
 	c := &raft.Config{
@@ -539,7 +553,7 @@ func restartNode(cfg ServerConfig, snapshot *raftpb.Snapshot) (types.ID, *member
 			c.Logger = logutil.NewRaftLoggerFromZapCore(cfg.LoggerCore, cfg.LoggerWriteSyncer)
 		}
 	}
-
+	//mike 获取node
 	n := raft.RestartNode(c)
 	raftStatusMu.Lock()
 	raftStatus = n.Status

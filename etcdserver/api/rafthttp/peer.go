@@ -54,7 +54,7 @@ const (
 	pipelineMsg = "pipeline"
 	sendSnap    = "sendMsgSnap"
 )
-
+//mike 上层peer的接口函数
 type Peer interface {
 	// send sends the message to the remote peer. The function is non-blocking
 	// and has no promise that the message will be received by the remote.

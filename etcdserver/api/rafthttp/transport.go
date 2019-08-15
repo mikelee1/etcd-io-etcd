@@ -32,6 +32,7 @@ import (
 	"github.com/xiang90/probing"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
+	"fmt"
 )
 
 var plog = logutil.NewMergeLogger(capnslog.NewPackageLogger("go.etcd.io/etcd", "rafthttp"))
@@ -52,16 +53,19 @@ type Transporter interface {
 	// from remote peers.
 	// The handler MUST be used to handle RaftPrefix(/raft)
 	// endpoint.
+	//mike 处理peer -> server的请求
 	Handler() http.Handler
 	// Send sends out the given messages to the remote peers.
 	// Each message has a To field, which is an id that maps
 	// to an existing peer in the transport.
 	// If the id cannot be found in the transport, the message
 	// will be ignored.
+	//mike 发送raftmessage -> peer
 	Send(m []raftpb.Message)
 	// SendSnapshot sends out the given snapshot message to a remote peer.
 	// The behavior of SendSnapshot is similar to Send.
 	SendSnapshot(m snap.Message)
+	//mike 新加入节点根据remote去catch up
 	// AddRemote adds a remote with given peer urls into the transport.
 	// A remote helps newly joined member to catch up the progress of cluster,
 	// and will not be used after that.
@@ -91,7 +95,7 @@ type Transporter interface {
 	// Stop closes the connections and stops the transporter.
 	Stop()
 }
-
+//mike transport连接了上层的peers，主要作用是peer <<<<----raftmessage---->>>> peer
 // Transport implements Transporter interface. It provides the functionality
 // to send raft messages to peers, and receive raft messages from peers.
 // User should call Handler method to get a handler to serve requests
@@ -111,6 +115,7 @@ type Transport struct {
 	ID          types.ID   // local member ID
 	URLs        types.URLs // local peer URLs
 	ClusterID   types.ID   // raft cluster ID for request validation
+	//mike transport的raft接口，用来发送自己接收到的msgs给raft
 	Raft        Raft       // raft state machine, to which the Transport forwards received messages and reports status
 	Snapshotter *snap.Snapshotter
 	ServerStats *stats.ServerStats // used to record general transportation statistics
@@ -128,6 +133,7 @@ type Transport struct {
 
 	mu      sync.RWMutex         // protect the remote and peer map
 	remotes map[types.ID]*remote // remotes map that helps newly joined member to catch up
+	//mike 该map记录了节点实例
 	peers   map[types.ID]Peer    // peers map
 
 	pipelineProber probing.Prober
@@ -178,6 +184,7 @@ func (t *Transport) Get(id types.ID) Peer {
 
 func (t *Transport) Send(msgs []raftpb.Message) {
 	for _, m := range msgs {
+		fmt.Println("send msg: ",m.From,m.To)
 		if m.To == 0 {
 			// ignore intentionally dropped message
 			continue
@@ -190,7 +197,7 @@ func (t *Transport) Send(msgs []raftpb.Message) {
 		g, rok := t.remotes[to]
 		t.mu.RUnlock()
 
-		if pok {
+		if pok {//mike 如果peer实例存在
 			if m.Type == raftpb.MsgApp {
 				t.ServerStats.SendAppendReq(m.Size())
 			}
@@ -198,7 +205,7 @@ func (t *Transport) Send(msgs []raftpb.Message) {
 			continue
 		}
 
-		if rok {
+		if rok {//mike 如果remoter实例存在
 			g.send(m)
 			continue
 		}
@@ -289,6 +296,7 @@ func (t *Transport) AddRemote(id types.ID, us []string) {
 			plog.Panicf("newURLs %+v should never fail: %+v", us, err)
 		}
 	}
+	//mike 加入remote
 	t.remotes[id] = startRemote(t, urls, id)
 
 	if t.Logger != nil {
@@ -321,6 +329,7 @@ func (t *Transport) AddPeer(id types.ID, us []string) {
 	}
 	fs := t.LeaderStats.Follower(id.String())
 	t.peers[id] = startPeer(t, urls, id, fs)
+	//开启探针协程，检查peer的健康状况
 	addPeerToProber(t.Logger, t.pipelineProber, id.String(), us, RoundTripperNameSnapshot, rttSec)
 	addPeerToProber(t.Logger, t.streamProber, id.String(), us, RoundTripperNameRaftMessage, rttSec)
 
@@ -335,13 +344,13 @@ func (t *Transport) AddPeer(id types.ID, us []string) {
 		plog.Infof("added peer %s", id)
 	}
 }
-
+//mike 移除节点
 func (t *Transport) RemovePeer(id types.ID) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.removePeer(id)
 }
-
+//mike 移除所有节点
 func (t *Transport) RemoveAllPeers() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -361,6 +370,7 @@ func (t *Transport) removePeer(id types.ID) {
 			plog.Panicf("unexpected removal of unknown peer '%d'", id)
 		}
 	}
+	//mike 删除该peer
 	delete(t.peers, id)
 	delete(t.LeaderStats.Followers, id.String())
 	t.pipelineProber.Remove(id.String())

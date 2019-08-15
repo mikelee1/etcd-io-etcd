@@ -89,27 +89,27 @@ type Ready struct {
 	// written to disk or if an asynchronous write is permissible.
 	MustSync bool
 }
-
+//mike hardstate是否相等
 func isHardStateEqual(a, b pb.HardState) bool {
 	return a.Term == b.Term && a.Vote == b.Vote && a.Commit == b.Commit
 }
-
+//mike hardstate是否为空
 // IsEmptyHardState returns true if the given HardState is empty.
 func IsEmptyHardState(st pb.HardState) bool {
 	return isHardStateEqual(st, emptyState)
 }
-
+//mike snapshot是否为空
 // IsEmptySnap returns true if the given Snapshot is empty.
 func IsEmptySnap(sp pb.Snapshot) bool {
 	return sp.Metadata.Index == 0
 }
-
+//mike ready变量中是否含有需要更新的信息
 func (rd Ready) containsUpdates() bool {
 	return rd.SoftState != nil || !IsEmptyHardState(rd.HardState) ||
 		!IsEmptySnap(rd.Snapshot) || len(rd.Entries) > 0 ||
 		len(rd.CommittedEntries) > 0 || len(rd.Messages) > 0 || len(rd.ReadStates) != 0
 }
-
+//mike 返回apply的最新index
 // appliedCursor extracts from the Ready the highest index the client has
 // applied (once the Ready is confirmed via Advance). If no information is
 // contained in the Ready, returns zero.
@@ -123,8 +123,10 @@ func (rd Ready) appliedCursor() uint64 {
 	return 0
 }
 //mike 供etcdserver调用的接口函数
+//mike 可以理解为raft集群的一个节点，客户端也主要是这个类打交道，比如心跳的逻辑、propose、状态机、成员变更等都是这个类负责处理。
 // Node represents a node in a raft cluster.
 type Node interface {
+	//mike 心跳或者超时的tick函数
 	// Tick increments the internal logical clock for the Node by a single tick. Election
 	// timeouts and heartbeat timeouts are in units of ticks.
 	Tick()
@@ -149,7 +151,7 @@ type Node interface {
 	// usage details and semantics.
 	//mike 修改配置项的propose
 	ProposeConfChange(ctx context.Context, cc pb.ConfChangeI) error
-	//mike 处理message
+	//mike node处理message
 	// Step advances the state machine using the given message. ctx.Err() will be returned, if any.
 	Step(ctx context.Context, msg pb.Message) error
 	//mike 由raft向etcdserver返回ready通道
@@ -210,7 +212,7 @@ type Peer struct {
 	ID      uint64
 	Context []byte
 }
-//mike peers不为空时调用
+//mike peers不为空时调用，用于新建raft集群
 // StartNode returns a new Node given configuration and a list of raft peers.
 // It appends a ConfChangeAddNode entry for each given peer to the initial log.
 //
@@ -219,30 +221,34 @@ func StartNode(c *Config, peers []Peer) Node {
 	if len(peers) == 0 {
 		panic("no peers given; use RestartNode instead")
 	}
+	//mike 新建rawnode,内含raft
 	rn, err := NewRawNode(c)
 	if err != nil {
 		panic(err)
 	}
-	//mike 设置bootstrap
+	//mike 设置bootstrap，没启动
 	rn.Bootstrap(peers)
-
+	//mike node在rawnode基础上加入各种chan
 	n := newNode(rn)
-	//mike 协程开启raft的节点服务
+	//mike 协程开启raft的节点服务，链接etcdserver和raft server
 	go n.run()
 	return &n
 }
-//mike peers为空时调用
+//mike peers为空时调用，用于重启raft集群
 // RestartNode is similar to StartNode but does not take a list of peers.
 // The current membership of the cluster will be restored from the Storage.
 // If the caller has an existing state machine, pass in the last log index that
 // has been applied to it; otherwise use zero.
 func RestartNode(c *Config) Node {
 	fmt.Println("in RestartNode")
+	//mike 新建一个raw node
 	rn, err := NewRawNode(c)
 	if err != nil {
 		panic(err)
 	}
+	//mike 新建一个node结构体变量，其中包含了rawnode这个子结构，另外还有很多的控制通道
 	n := newNode(rn)
+	//mike 启动node协程，协程内会跟raft节点和etcd server进行通信，作为二者的串联
 	go n.run()
 	return &n
 }
@@ -254,14 +260,14 @@ type msgWithResult struct {
 //mike node是sdk和raft集群之间的媒介，实现了Node接口
 // node is the canonical implementation of the Node interface
 type node struct {
-	//mike msgprop类型的
+	//mike msgprop类型的  etcd server -> raft
 	propc      chan msgWithResult
 	//mike 接收sdk传给raft的message
 	recvc      chan pb.Message
 	confc      chan pb.ConfChangeV2
 	confstatec chan pb.ConfState
-	readyc     chan Ready //raft -> etcd_server
-	advancec   chan struct{}
+	readyc     chan Ready //mike raft -> etcd_server
+	advancec   chan struct{} //mike etcd server -> raft
 	tickc      chan struct{}
 	done       chan struct{}
 	stop       chan struct{}
@@ -302,20 +308,22 @@ func (n *node) Stop() {
 }
 //mike 启动节点，跟raft节点进行通信，这里相当于是raft集群的client端，通过raft的Step进行调用
 func (n *node) run() {
-	fmt.Println("run")
-	defer fmt.Println("exit run")
 	//mike etcdserver -> raft
 	var propc chan msgWithResult
 	//mike raft -> etcdserver
 	var readyc chan Ready
+	//mike etcdserver -> raft
 	var advancec chan struct{}
 	var rd Ready
 
 	r := n.rn.raft
 
 	lead := None
-	//mike 节点进入死循环
 	for {
+		//mike advancec有值 -> readyc置为nil -> advance()以后，advance nil -> readyc 有值 -> 取出readyc中的值
+		//         |                                                                           |
+		//          ----------------------------<----------------------------------------------
+		//mike 应用层通知上一个 ready 对象已经处理完毕了 此时 advancec为nil
 		if advancec != nil {//mike？？ readyc和advancec的关系
 			readyc = nil
 		} else if n.rn.HasReady() {//mike 比如messages中有值
@@ -332,28 +340,28 @@ func (n *node) run() {
 		}
 		//mike r.lead赋值给lead
 		if lead != r.lead {
-			if r.hasLeader() {
-				if lead == None {
+			if r.hasLeader() {//mike 已有leader，设置propc，接收etcd server的值传过来
+				if lead == None {//mike 如果记录的lead为none
 					r.logger.Infof("raft.node: %x elected leader %x at term %d", r.id, r.lead, r.Term)
-				} else {
+				} else {//mike 如果记录的lead有旧值
 					r.logger.Infof("raft.node: %x changed leader from %x to %x at term %d", r.id, lead, r.lead, r.Term)
 				}
-				propc = n.propc
-			} else {//mike 如果propc没有leader
+				propc = n.propc //etcdserver -> raft
+			} else {//mike 如果没有leader，设置propc为空
 				r.logger.Infof("raft.node: %x lost leader %x at term %d", r.id, lead, r.Term)
 				propc = nil
 			}
-			lead = r.lead
+			lead = r.lead//mike 缓存lead id
 		}
 
 		select {
 		// TODO: maybe buffer the config propose if there exists one (the way
 		// described in raft dissertation)
 		// Currently it is dropped in Step silently.
-		case pm := <-propc://mike 带有result通道的msgprop
+		case pm := <-propc://mike 接受etcdserver发来的req，带有result通道的msgprop
 			m := pm.m
 			m.From = r.id
-			err := r.Step(m)//mike 给raft的Step函数发送m
+			err := r.Step(m)//mike 给raft的Step函数发送m，m被raft处理一圈以后还是由server处理
 			if pm.result != nil {//mike 给msg返回结果
 				pm.result <- err
 				close(pm.result)
@@ -397,10 +405,11 @@ func (n *node) run() {
 			n.rn.Tick() //mike 此处的Tick会触发raft中的tickelection、tickheartbeat等
 		case readyc <- rd://mike 这里其实是对n.readyc进行赋值
 			n.rn.acceptReady(rd)
-			advancec = n.advancec
+			advancec = n.advancec //mike advancec会在etcd server处理完一批ready后被传值
 		case <-advancec://mike？？ 可能是用于append entry后的raft共识，case成立的条件是上面一行的n.advancec有值
+			//mike
 			n.rn.Advance(rd)
-			rd = Ready{}
+			rd = Ready{} //mike rd重新复制
 			advancec = nil
 		case c := <-n.status://mike 将status发送给c通道
 			c <- getStatus(r)
@@ -415,7 +424,7 @@ func (n *node) run() {
 // and heartbeat timeouts are in units of ticks.
 func (n *node) Tick() {
 	select {
-	case n.tickc <- struct{}{}:
+	case n.tickc <- struct{}{}://mike raft的tick方法调用后，该case就生效
 	case <-n.done:
 	default:
 		n.rn.raft.logger.Warningf("%x (leader %v) A tick missed to fire. Node blocks too long!", n.rn.raft.id, n.rn.raft.id == n.rn.raft.lead)
@@ -425,6 +434,8 @@ func (n *node) Tick() {
 func (n *node) Campaign(ctx context.Context) error { return n.step(ctx, pb.Message{Type: pb.MsgHup}) }
 //mike 发送propose也是通过step函数，msgprop写死的类型
 func (n *node) Propose(ctx context.Context, data []byte) error {
+	//mike 这里会等待方法结束
+	//mike raft处理的msg最开始产生的地方，后面会转化成entry
 	return n.stepWait(ctx, pb.Message{Type: pb.MsgProp, Entries: []pb.Entry{{Data: data}}})
 }
 //mike 底层调用step函数
@@ -434,9 +445,10 @@ func (n *node) Step(ctx context.Context, m pb.Message) error {
 		// TODO: return an error?
 		return nil
 	}
+	//mike 异步调用
 	return n.step(ctx, m)
 }
-//mike 根据config构造message
+//mike 根据config构造message，相当于etcdserver发送来的req转换为发送给raft的req
 func confChangeToMsg(c pb.ConfChangeI) (pb.Message, error) {
 	typ, data, err := pb.MarshalConfChange(c)
 	if err != nil {
@@ -444,7 +456,7 @@ func confChangeToMsg(c pb.ConfChangeI) (pb.Message, error) {
 	}
 	return pb.Message{Type: pb.MsgProp, Entries: []pb.Entry{{Type: typ, Data: data}}}, nil
 }
-//mike 提议修改配置，底层走step
+//mike 接受etcdserver的提议修改配置，底层走step
 func (n *node) ProposeConfChange(ctx context.Context, cc pb.ConfChangeI) error {
 	msg, err := confChangeToMsg(cc)
 	if err != nil {
@@ -505,7 +517,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 }
 //mike node.run函数中会对n.readyc进行赋值
 func (n *node) Ready() <-chan Ready { return n.readyc }
-
+//mike etcd server端处理完一批ready信息后，会调用Advance方法
 func (n *node) Advance() {
 	select {
 	case n.advancec <- struct{}{}://mike 开始进行raft的advance操作
@@ -564,7 +576,7 @@ func (n *node) TransferLeadership(ctx context.Context, lead, transferee uint64) 
 func (n *node) ReadIndex(ctx context.Context, rctx []byte) error {
 	return n.step(ctx, pb.Message{Type: pb.MsgReadIndex, Entries: []pb.Entry{{Data: rctx}}})
 }
-//mike
+//mike 对raft中的msg进行操作
 func newReady(r *raft, prevSoftSt *SoftState, prevHardSt pb.HardState) Ready {
 	rd := Ready{
 		Entries:          r.raftLog.unstableEntries(),

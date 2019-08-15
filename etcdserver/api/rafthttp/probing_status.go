@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xiang90/probing"
 	"go.uber.org/zap"
+	"fmt"
 )
 
 const (
@@ -37,7 +38,7 @@ var (
 	statusMonitoringInterval = 30 * time.Second
 	statusErrorInterval      = 5 * time.Second
 )
-
+//mike 检测peer的健康状况
 func addPeerToProber(lg *zap.Logger, p probing.Prober, id string, us []string, roundTripperName string, rttSecProm *prometheus.HistogramVec) {
 	hus := make([]string, len(us))
 	for i := range us {
@@ -98,6 +99,7 @@ func monitorProbingStatus(lg *zap.Logger, s probing.Status, id string, roundTrip
 			rttSecProm.WithLabelValues(id).Observe(s.SRTT().Seconds())
 
 		case <-s.StopNotify():
+			fmt.Println("exit monitorProbingStatus")
 			return
 		}
 	}

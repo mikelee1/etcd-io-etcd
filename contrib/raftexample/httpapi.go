@@ -26,9 +26,10 @@ import (
 // Handler for a http based key-value store backed by raft
 type httpKVAPI struct {
 	store       *kvstore
+	//mike 接收用户端的配置修改
 	confChangeC chan<- raftpb.ConfChange
 }
-
+//mike 只要实现了ServeHTTP就可被当作server handler
 func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.RequestURI
 	defer r.Body.Close()
@@ -66,7 +67,7 @@ func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed on POST", http.StatusBadRequest)
 			return
 		}
-
+		//mike 构造增加节点的配置
 		cc := raftpb.ConfChange{
 			Type:    raftpb.ConfChangeAddNode,
 			NodeID:  nodeId,
@@ -83,7 +84,7 @@ func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed on DELETE", http.StatusBadRequest)
 			return
 		}
-
+		//mike 构造删除节点的配置
 		cc := raftpb.ConfChange{
 			Type:   raftpb.ConfChangeRemoveNode,
 			NodeID: nodeId,

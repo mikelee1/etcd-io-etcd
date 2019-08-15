@@ -51,7 +51,7 @@ type Cluster interface {
 	// MemberPromote promotes a member from raft learner (non-voting) to raft voting member.
 	MemberPromote(ctx context.Context, id uint64) (*MemberPromoteResponse, error)
 }
-
+//mike cluster的客户端
 type cluster struct {
 	remote   pb.ClusterClient
 	callOpts []grpc.CallOption

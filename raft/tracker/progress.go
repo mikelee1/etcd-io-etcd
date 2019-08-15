@@ -236,7 +236,7 @@ func (pr *Progress) String() string {
 	}
 	return buf.String()
 }
-
+//mike leader视角下的各个follower中的progress
 // ProgressMap is a map of *Progress.
 type ProgressMap map[uint64]*Progress
 

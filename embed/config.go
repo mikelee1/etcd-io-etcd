@@ -407,7 +407,7 @@ func NewConfig() *Config {
 
 		AuthToken:  "simple",
 		BcryptCost: uint(bcrypt.DefaultCost),
-
+		//mike 设置竞选leader时有没有campaignPreElection
 		PreVote: false, // TODO: enable by default in v3.5
 
 		loggerMu:            new(sync.RWMutex),
@@ -661,6 +661,7 @@ func (cfg *Config) PeerURLsMapAndToken(which string) (urlsmap types.URLsMap, tok
 
 	default:
 		// We're statically configured, and cluster has appropriately been set.
+		//mike InitialCluster为docker-node1=http://127.0.0.1:12380,docker-node2=http://127.0.0.1:22380,docker-node3=http://127.0.0.1:32380这样
 		urlsmap, err = types.NewURLsMap(cfg.InitialCluster)
 	}
 	return urlsmap, token, err

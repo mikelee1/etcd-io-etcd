@@ -88,7 +88,7 @@ type peerListener struct {
 	serve func() error
 	close func(context.Context) error
 }
-
+//mike 启动etcd的服务端，架起client和server之间的handler函数
 // StartEtcd launches the etcd server and HTTP handlers for client/server communication.
 // The returned Etcd.Server is not guaranteed to have joined the cluster. Wait
 // on the Etcd.Server.ReadyNotify() channel to know when it completes and is ready for use.
@@ -142,13 +142,17 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		token   string
 	)
 	memberInitialized := true
-	if !isMemberInitialized(cfg) {
+	//mike 是否包含wal文件夹
+	if !isMemberInitialized(cfg) {//mike member未初始化
 		memberInitialized = false
+		//mike 解析cmd中的init-cluster
 		urlsmap, token, err = cfg.PeerURLsMapAndToken("etcd")
 		if err != nil {
 			return e, fmt.Errorf("error setting up initial cluster: %v", err)
 		}
+		fmt.Println("urlsmap: ",urlsmap)
 	}
+	fmt.Println("urlsmap1: ",urlsmap)
 
 	// AutoCompactionRetention defaults to "0" if not set.
 	if len(cfg.AutoCompactionRetention) == 0 {
@@ -160,7 +164,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 	}
 
 	backendFreelistType := parseBackendFreelistType(cfg.ExperimentalBackendFreelistType)
-
+	//mike etcd服务端的配置信息
 	srvcfg := etcdserver.ServerConfig{
 		Name:                       cfg.Name,
 		ClientURLs:                 cfg.ACUrls,
@@ -171,7 +175,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		SnapshotCatchUpEntries:     cfg.SnapshotCatchUpEntries,
 		MaxSnapFiles:               cfg.MaxSnapFiles,
 		MaxWALFiles:                cfg.MaxWalFiles,
-		InitialPeerURLsMap:         urlsmap,
+		InitialPeerURLsMap:         urlsmap,//mike 设置urlsmap
 		InitialClusterToken:        token,
 		DiscoveryURL:               cfg.Durl,
 		DiscoveryProxy:             cfg.Dproxy,
@@ -206,8 +210,8 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		EnableGRPCGateway:          cfg.EnableGRPCGateway,
 		EnableLeaseCheckpoint:      cfg.ExperimentalEnableLeaseCheckpoint,
 	}
-	print(e.cfg.logger, *cfg, srvcfg, memberInitialized)
-	if e.Server, err = etcdserver.NewServer(srvcfg); err != nil {
+	//mike 新建etcdserver，其中会起raft集群
+	if e.Server, err = etcdserver.NewServer(srvcfg); err != nil {//mike srvcfg
 		return e, err
 	}
 
@@ -224,8 +228,9 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 			return e, err
 		}
 	}
+	//mike 非阻塞地start服务端
 	e.Server.Start()
-
+	fmt.Println("start....")
 	if err = e.servePeers(); err != nil {
 		return e, err
 	}

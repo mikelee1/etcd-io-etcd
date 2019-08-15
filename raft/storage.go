@@ -44,6 +44,7 @@ var ErrSnapshotTemporarilyUnavailable = errors.New("snapshot is temporarily unav
 // become inoperable and refuse to participate in elections; the
 // application is responsible for cleanup and recovery in this case.
 type Storage interface {
+	//mike 获取hardstate和confstate
 	// InitialState returns the saved HardState and ConfState information.
 	InitialState() (pb.HardState, pb.ConfState, error)
 	// Entries returns a slice of log entries in the range [lo,hi).
@@ -68,7 +69,7 @@ type Storage interface {
 	// snapshot and call Snapshot later.
 	Snapshot() (pb.Snapshot, error)
 }
-
+//mike 放在内存中管理的storage实例
 // MemoryStorage implements the Storage interface backed by an
 // in-memory array.
 type MemoryStorage struct {
@@ -95,7 +96,7 @@ func NewMemoryStorage() *MemoryStorage {
 func (ms *MemoryStorage) InitialState() (pb.HardState, pb.ConfState, error) {
 	return ms.hardState, ms.snapshot.Metadata.ConfState, nil
 }
-
+//mike 设置memorystorage的hardstate
 // SetHardState saves the current HardState.
 func (ms *MemoryStorage) SetHardState(st pb.HardState) error {
 	ms.Lock()
@@ -103,7 +104,7 @@ func (ms *MemoryStorage) SetHardState(st pb.HardState) error {
 	ms.hardState = st
 	return nil
 }
-
+//mike 获取entries
 // Entries implements the Storage interface.
 func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 	ms.Lock()
