@@ -28,16 +28,20 @@ func main() {
 	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
 
+	//mike 普通的propose
 	proposeC := make(chan string)
 	defer close(proposeC)
+	//mike 修改配置的
 	confChangeC := make(chan raftpb.ConfChange)
 	defer close(confChangeC)
 
 	// raft provides a commit stream for the proposals from the http api
 	var kvs *kvstore
 	getSnapshot := func() ([]byte, error) { return kvs.getSnapshot() }
+	//mike 相对应用层而言，通过proposeC进raft，commitC从raft出
 	commitC, errorC, snapshotterReady := newRaftNode(*id, strings.Split(*cluster, ","), *join, getSnapshot, proposeC, confChangeC)
 
+	//mike
 	kvs = newKVStore(<-snapshotterReady, proposeC, commitC, errorC)
 
 	// the key-value http handler will propose updates to raft

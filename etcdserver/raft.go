@@ -121,6 +121,7 @@ type raftNodeConfig struct {
 	// Sending messages MUST NOT block. It is okay to drop messages, since
 	// clients should timeout and reissue their messages.
 	// If transport is nil, server will panic.
+	//mike etcd server的通信层
 	transport rafthttp.Transporter
 }
 
@@ -152,7 +153,7 @@ func (r *raftNode) tick() {
 	r.Tick()
 	r.tickMu.Unlock()
 }
-
+//mike 处理raft发到etcd server的请求
 // start prepares and starts raftNode in a new goroutine. It is no longer safe
 // to modify the fields after it has been started.
 func (r *raftNode) start(rh *raftReadyHandler) {
@@ -164,13 +165,13 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 
 		for {
 			select {
-			case <-r.ticker.C:
+			case <-r.ticker.C://mike 心跳信号触发node里面的Tick函数去发送heartbeat和election方法
 				r.tick()
 			case rd := <-r.Ready()://mike 这里监听着node发过来的ready消息，包含各种message，n.readyc的流向是raft->etcdserver
 				fmt.Println("got ready from raft")
 				if rd.SoftState != nil {
 					newLeader := rd.SoftState.Lead != raft.None && rh.getLead() != rd.SoftState.Lead
-					if newLeader {
+					if newLeader {//mike 新leader
 						leaderChanges.Inc()
 					}
 
@@ -217,7 +218,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				updateCommittedIndex(&ap, rh)
 
 				select {
-				case r.applyc <- ap:
+				case r.applyc <- ap://mike 触发apply
 				case <-r.stopped:
 					return
 				}
@@ -227,10 +228,11 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				// For more details, check raft thesis 10.2.1
 				if islead {
 					// gofail: var raftBeforeLeaderSend struct{}
-					//mike 由etcd的server端发送raft的消息到raft集群中其他节点
+					//mike 由etcd的server端发送raft的消息到raft集群中其他节点，让他们也apply
 					r.transport.Send(r.processMessages(rd.Messages))
 				}
 				//mike 保存entries等
+				//mike 将ready的HS和日志条目写入持久化存储，在这里是写入WAL中。
 				// gofail: var raftBeforeSave struct{}
 				if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
 					if r.lg != nil {
@@ -257,6 +259,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					notifyc <- struct{}{}
 
 					// gofail: var raftAfterSaveSnap struct{}
+					//mike 用snapshot覆盖现有的snap和ents
 					r.raftStorage.ApplySnapshot(rd.Snapshot)
 					if r.lg != nil {
 						r.lg.Info("applied incoming Raft snapshot", zap.Uint64("snapshot-index", rd.Snapshot.Metadata.Index))
@@ -265,7 +268,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					}
 					// gofail: var raftAfterApplySnap struct{}
 				}
-
+				//mike 向raft存储添加ready的日志数据
 				r.raftStorage.Append(rd.Entries)
 
 				if !islead {
@@ -283,6 +286,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					// on its own single-node cluster, before apply-layer applies the config change.
 					// We simply wait for ALL pending entries to be applied for now.
 					// We might improve this later on if it causes unnecessary long blocking issues.
+					//mike ent在confchange情况下，需要等待
 					waitApply := false
 					for _, ent := range rd.CommittedEntries {
 						if ent.Type == raftpb.EntryConfChange {
@@ -489,16 +493,17 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 		}
 	}
 
-	if len(peers) == 0 {//mike 重启raft集群中的node
-		n = raft.RestartNode(c)
-	} else {//mike 新建raft集群并启动其中的node，这里的peers相当于是让node知道有哪些peer在集群里
-		n = raft.StartNode(c, peers)
+	if len(peers) == 0 {
+		n = raft.RestartNode(c)//mike 重启raft集群中的node
+	} else {
+		n = raft.StartNode(c, peers)//mike 新建raft集群并启动其中的node，这里的peers相当于是让node知道有哪些peer在集群里
 	}
 	raftStatusMu.Lock()
 	raftStatus = n.Status
 	raftStatusMu.Unlock()
 	return id, n, s, w
 }
+//mike 重启server，根据WAL数据恢复
 //mike 重启节点：读取wal文件
 func restartNode(cfg ServerConfig, snapshot *raftpb.Snapshot) (types.ID, *membership.RaftCluster, raft.Node, *raft.MemoryStorage, *wal.WAL) {
 	var walsnap walpb.Snapshot

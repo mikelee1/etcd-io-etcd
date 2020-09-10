@@ -29,6 +29,7 @@ type Config struct {
 	// incoming configuration should be carried out automatically by Raft when
 	// this is possible. If false, the configuration will be joint until the
 	// application initiates the transition manually.
+	//mike
 	AutoLeave bool
 	// Learners is a set of IDs corresponding to the learners active in the
 	// current configuration.
@@ -183,7 +184,7 @@ func (p *ProgressTracker) QuorumActive() bool {
 		}
 		votes[id] = pr.RecentActive
 	})
-
+	//mike 对节点活跃进行判断
 	return p.Voters.VoteResult(votes) == quorum.VoteWon
 }
 

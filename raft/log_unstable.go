@@ -20,12 +20,25 @@ import pb "go.etcd.io/etcd/raft/raftpb"
 // Note that unstable.offset may be less than the highest log
 // position in storage; this means that the next write to storage
 // might need to truncate the log before persisting unstable.entries.
+
+// entry数组中位置为i的元素保存的数据位置在raft log位置i + offset位置的数据
+// 其中offset可能小于持久化存储的最大索引偏移量，这意味着持久化存储中在offset的数据
+// 可能会被截断
+
+// unstable用来保存还未持久化的数据，其可能保存在两个地方：
+// 快照数据snapshot或者entry数组
+// 两者中同时只可能存在其中之一
+// 快照数据用于开始启动时需要恢复的数据较多，所以一次性的使用快照数据来恢复
+// entry数组则是用于逐条数据进行接收时使用
+// 其中offset与entry数组配合着使用，可能会出现小于持久化最大索引偏移量的数据，所以需要做截断处理
 type unstable struct {
 	// the incoming unstable snapshot, if any.
+	// 保存还没有持久化的快照数据
 	snapshot *pb.Snapshot
 	//mike 管理着未被写入storage的entries
 	// all entries that have not yet been written to storage.
 	entries []pb.Entry
+	// offset用于保存entries数组中的数据的起始index
 	offset  uint64
 
 	logger Logger

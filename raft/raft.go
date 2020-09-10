@@ -171,7 +171,7 @@ type Config struct {
 	// overflowing that sending buffer. TODO (xiangli): feedback to application to
 	// limit the proposal rate?
 	MaxInflightMsgs int
-
+	//mike 标记leader是否需要检查集群中超过半数节点的活跃性，如果在选举超时内没有满足该条件，leader切换到follower状态
 	// CheckQuorum specifies if the leader should check quorum activity. Leader
 	// steps down when quorum is not active for an electionTimeout.
 	CheckQuorum bool
@@ -208,6 +208,7 @@ type Config struct {
 	// to the leader.
 	DisableProposalForwarding bool
 }
+
 //mike 检查验证
 func (c *Config) validate() error {
 	if c.ID == None {
@@ -250,6 +251,7 @@ func (c *Config) validate() error {
 
 	return nil
 }
+
 //mike 故事从这里开始
 //mike 从名字也可以看出来，这个是最核心的部分，比如leader选择的逻辑、raft消息的处理逻辑等
 type raft struct {
@@ -265,13 +267,15 @@ type raft struct {
 
 	maxMsgSize         uint64
 	maxUncommittedSize uint64
-	prs                tracker.ProgressTracker
+	//mike 记录raft集群中各个节点的地址，广播心跳和选举的时候会用到
+	prs tracker.ProgressTracker
 
 	state StateType
 
 	// isLearner is true if the local raft node is a learner.
 	isLearner bool
 
+	//mike 决定是否ready
 	msgs []pb.Message
 
 	// the leader id
@@ -302,9 +306,10 @@ type raft struct {
 	// number of ticks since it reached last heartbeatTimeout.
 	// only leader keeps heartbeatElapsed.
 	heartbeatElapsed int
-
+	//mike 检查法定人数
 	checkQuorum bool
-	preVote     bool
+	//mike 预投票
+	preVote bool
 
 	heartbeatTimeout int
 	electionTimeout  int
@@ -320,7 +325,8 @@ type raft struct {
 
 	logger Logger
 }
-//mike 生成raft实例，未启动
+
+//mike 生成raft实例模版，未启动
 func newRaft(c *Config) *raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
@@ -337,7 +343,7 @@ func newRaft(c *Config) *raft {
 	learners := c.learners
 	//mike 如果历史有节点信息
 	if len(cs.Voters) > 0 || len(cs.Learners) > 0 {
-		if len(peers) > 0 || len(learners) > 0 {//mike 新配置的节点信息不为空，则panic
+		if len(peers) > 0 || len(learners) > 0 { //mike 新配置的节点信息不为空，则panic
 			// TODO(bdarnell): the peers argument is always nil except in
 			// tests; the argument should be removed and these tests should be
 			// updated to specify their nodes through a snapshot.
@@ -363,17 +369,19 @@ func newRaft(c *Config) *raft {
 		readOnly:                  newReadOnly(c.ReadOnlyOption),
 		disableProposalForwarding: c.DisableProposalForwarding,
 	}
-	//mike？？
+	//mike？ 修改集群中的节点配置
 	for _, p := range peers {
 		// Add node to active config.
 		//mike apply表示直接修改状态机中的值
 		r.applyConfChange(pb.ConfChange{Type: pb.ConfChangeAddNode, NodeID: p}.AsV2())
 	}
+	//mike 修改集群中的节点配置
 	for _, p := range learners {
 		// Add learner to active config.
 		r.applyConfChange(pb.ConfChange{Type: pb.ConfChangeAddLearnerNode, NodeID: p}.AsV2())
 	}
 
+	//mike 如果hs不为空，则加载
 	if !isHardStateEqual(hs, emptyState) {
 		r.loadState(hs)
 	}
@@ -404,6 +412,7 @@ func (r *raft) hardState() pb.HardState {
 		Commit: r.raftLog.committed,
 	}
 }
+
 //mike send用来保存msg到msgs，raft集群的节点间发送心跳等
 // send persists state to stable storage and then sends to its mailbox.
 func (r *raft) send(m pb.Message) {
@@ -436,7 +445,7 @@ func (r *raft) send(m pb.Message) {
 			m.Term = r.Term
 		}
 	}
-	fmt.Println("add msgs: ",m.Type.String())
+	//fmt.Println("add msgs: ",m.Type.String())
 	r.msgs = append(r.msgs, m)
 }
 
@@ -446,6 +455,7 @@ func (r *raft) sendAppend(to uint64) {
 	r.maybeSendAppend(to, true)
 }
 
+//mike 发送entries给节点
 // maybeSendAppend sends an append RPC with new entries to the given peer,
 // if necessary. Returns true if a message was sent. The sendIfEmpty
 // argument controls whether messages with no entries will be sent
@@ -460,17 +470,19 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	m.To = to
 
 	term, errt := r.raftLog.term(pr.Next - 1)
+	//mike 获取leader的raftlog中的ents
 	ents, erre := r.raftLog.entries(pr.Next, r.maxMsgSize)
 	if len(ents) == 0 && !sendIfEmpty {
 		return false
 	}
 
 	if errt != nil || erre != nil { // send snapshot if we failed to get term or entries
+		// 如果前面过程中有错，那说明之前的数据都写到快照里了，尝试发送快照数据过去
 		if !pr.RecentActive {
 			r.logger.Debugf("ignore sending snapshot to %x since it is not recently active", to)
 			return false
 		}
-
+		//mike 当leader发送MsgSnap（snapshot请求）时，会将目标follower的progress变更为Snapshot状态
 		m.Type = pb.MsgSnap
 		snapshot, err := r.raftLog.snapshot()
 		if err != nil {
@@ -489,12 +501,12 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 			r.id, r.raftLog.firstIndex(), r.raftLog.committed, sindex, sterm, to, pr)
 		pr.BecomeSnapshot(sindex)
 		r.logger.Debugf("%x paused sending replication messages to %x [%s]", r.id, to, pr)
-	} else {
+	} else { // 否则就是简单的发送append消息
 		m.Type = pb.MsgApp
-		m.Index = pr.Next - 1
+		m.Index = pr.Next - 1 //mike？？
 		m.LogTerm = term
-		m.Entries = ents
-		m.Commit = r.raftLog.committed
+		m.Entries = ents               //mike 包含entries
+		m.Commit = r.raftLog.committed //mike 将leader中的committed index发送给followers
 		if n := len(m.Entries); n != 0 {
 			switch pr.State {
 			// optimistically increase the next when in StateReplicate
@@ -512,9 +524,11 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	r.send(m)
 	return true
 }
+
 //mike 构造心跳的message并调用send函数
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
+	//fmt.Println("sendHeartbeat")
 	// Attach the commit as min(to.matched, r.committed).
 	// When the leader sends out heartbeat message,
 	// the receiver(follower) might not be matched with the leader
@@ -531,6 +545,7 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 
 	r.send(m)
 }
+
 //mike 广播发送append消息
 // bcastAppend sends RPC, with entries to all peers that are not up-to-date
 // according to the progress recorded in r.prs.
@@ -543,7 +558,8 @@ func (r *raft) bcastAppend() {
 		r.sendAppend(id)
 	})
 }
-//mike 广播发送心跳
+
+//mike leader广播发送心跳
 // bcastHeartbeat sends RPC, without entries to all the peers.
 func (r *raft) bcastHeartbeat() {
 	lastCtx := r.readOnly.lastPendingRequestCtx()
@@ -553,6 +569,7 @@ func (r *raft) bcastHeartbeat() {
 		r.bcastHeartbeatWithCtx([]byte(lastCtx))
 	}
 }
+
 //mike 包装了context
 func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
 	r.prs.Visit(func(id uint64, _ *tracker.Progress) {
@@ -578,6 +595,7 @@ func (r *raft) advance(rd Ready) {
 			if err != nil {
 				panic(err)
 			}
+			//mike 配置更新的entry
 			ent := pb.Entry{
 				Type: pb.EntryConfChangeV2,
 				Data: ccdata,
@@ -603,6 +621,7 @@ func (r *raft) advance(rd Ready) {
 		r.raftLog.stableSnapTo(rd.Snapshot.Metadata.Index)
 	}
 }
+
 //mike 尝试commit
 // maybeCommit attempts to advance the commit index. Returns true if
 // the commit index changed (in which case the caller should call
@@ -611,6 +630,7 @@ func (r *raft) maybeCommit() bool {
 	mci := r.prs.Committed()
 	return r.raftLog.maybeCommit(mci, r.Term)
 }
+
 //mike 重置term
 func (r *raft) reset(term uint64) {
 	if r.Term != term {
@@ -643,9 +663,11 @@ func (r *raft) reset(term uint64) {
 	r.readOnly = newReadOnly(r.readOnly.option)
 }
 
+//mike leader的操作：加入entry
 func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
+	fmt.Println("in appendEntry")
 	li := r.raftLog.lastIndex()
-	for i := range es {
+	for i := range es { //将es的index一个一个顺次往后加
 		es[i].Term = r.Term
 		es[i].Index = li + 1 + uint64(i)
 	}
@@ -665,6 +687,7 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	r.maybeCommit()
 	return true
 }
+
 //mike 有关选举的时钟函数
 // tickElection is run by followers and candidates after r.electionTimeout.
 func (r *raft) tickElection() {
@@ -672,9 +695,11 @@ func (r *raft) tickElection() {
 
 	if r.promotable() && r.pastElectionTimeout() {
 		r.electionElapsed = 0
+		//mike？？ hup是个啥类型
 		r.Step(pb.Message{From: r.id, Type: pb.MsgHup})
 	}
 }
+
 //mike leader的心跳函数
 // tickHeartbeat is run by leaders to send a MsgBeat after r.heartbeatTimeout.
 func (r *raft) tickHeartbeat() {
@@ -683,7 +708,7 @@ func (r *raft) tickHeartbeat() {
 
 	if r.electionElapsed >= r.electionTimeout {
 		r.electionElapsed = 0
-		if r.checkQuorum {
+		if r.checkQuorum { //mike 检查集群中可用节点数量是否合法
 			r.Step(pb.Message{From: r.id, Type: pb.MsgCheckQuorum})
 		}
 		// If current leader cannot transfer leadership in electionTimeout, it becomes leader again.
@@ -703,7 +728,7 @@ func (r *raft) tickHeartbeat() {
 }
 
 func (r *raft) becomeFollower(term uint64, lead uint64) {
-	r.step = stepFollower//mike 是一个function
+	r.step = stepFollower //mike 是一个function
 	r.reset(term)
 	r.tick = r.tickElection //mike etcdserver_tick->node_tick->raft_tick
 	r.lead = lead
@@ -734,6 +759,7 @@ func (r *raft) becomePreCandidate() {
 	// r.Term or change r.Vote.
 	r.step = stepCandidate
 	r.prs.ResetVotes()
+	//mike 定时发起选举
 	r.tick = r.tickElection
 	r.lead = None
 	r.state = StatePreCandidate
@@ -747,6 +773,7 @@ func (r *raft) becomeLeader() {
 	}
 	r.step = stepLeader
 	r.reset(r.Term)
+	//mike leader节点的tick函数是heartbeat、其他节点是election
 	r.tick = r.tickHeartbeat
 	r.lead = r.id
 	//mike 成为至高无上的王者
@@ -776,11 +803,12 @@ func (r *raft) becomeLeader() {
 	r.reduceUncommittedSize([]pb.Entry{emptyEnt})
 	r.logger.Infof("%x became leader at term %d", r.id, r.Term)
 }
+
 //mike 收集投票结果进行判断
 // campaign transitions the raft instance to candidate state. This must only be
 // called after verifying that this is a legitimate transition.
 func (r *raft) campaign(t CampaignType) {
-	if !r.promotable() {//mike 没有竞选leader的资格
+	if !r.promotable() { //mike 没有竞选leader的资格
 		// This path should not be hit (callers are supposed to check), but
 		// better safe than sorry.
 		r.logger.Warningf("%x is unpromotable; campaign() should have been called", r.id)
@@ -794,24 +822,25 @@ func (r *raft) campaign(t CampaignType) {
 		// PreVote RPCs are sent for the next term before we've incremented r.Term.
 		term = r.Term + 1
 	} else {
+		//mike 成为候选人
 		r.becomeCandidate()
 		voteMsg = pb.MsgVote
 		term = r.Term
 	}
-	//mike 收集选票
+	//mike 收集选票，这里是自己投给自己，如果可以win，则直接变为leader
 	if _, _, res := r.poll(r.id, voteRespMsgType(voteMsg), true); res == quorum.VoteWon {
 		// We won the election after voting for ourselves (which must mean that
 		// this is a single-node cluster). Advance to the next state.
 		if t == campaignPreElection {
 			//mike PreVote算法解决了网络分区节点在重新加入时，会中断集群的问题
-			r.campaign(campaignElection)//mike 再去进行campaignElection
+			r.campaign(campaignElection) //mike 再去进行campaignElection
 		} else {
 			//mike 成为leader
 			r.becomeLeader()
 		}
 		return
 	}
-	//mike 非"竞选leader成功"的情况下会继续发送msg进行投票
+	//mike 向集群里的其他节点发送投票消息
 	for id := range r.prs.Voters.IDs() {
 		fmt.Println("campaign fail, to continue, id: ", id)
 		if id == r.id {
@@ -824,9 +853,11 @@ func (r *raft) campaign(t CampaignType) {
 		if t == campaignTransfer {
 			ctx = []byte(t)
 		}
+		//mike 发送给voters，请求选自己
 		r.send(pb.Message{Term: term, To: id, Type: voteMsg, Index: r.raftLog.lastIndex(), LogTerm: r.raftLog.lastTerm(), Context: ctx})
 	}
 }
+
 //mike 统计投票结果
 func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected int, result quorum.VoteResult) {
 	if v {
@@ -837,13 +868,15 @@ func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected 
 	r.prs.RecordVote(id, v)
 	return r.prs.TallyVotes()
 }
-//mike raft的重要函数Step，多看几遍，通过此函数和raft集群中的其他节点进行交互，包括心跳、选举等，区别于node的step方法
+
+//mike raft的重要函数Step，多看几遍，通过此函数发送到msg中，条件合适的时候由etcdserver和raft集群中的其他节点进行交互，包括心跳、选举等，区别于node的step方法
 func (r *raft) Step(m pb.Message) error {
 	// Handle the message term, which may result in our stepping down to a follower.
 	//mike 首先判断message中的term
 	switch {
 	case m.Term == 0:
 		// local message
+		// 来自本地的消息
 	case m.Term > r.Term:
 		if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {
 			force := bytes.Equal(m.Context, []byte(campaignTransfer))
@@ -868,7 +901,7 @@ func (r *raft) Step(m pb.Message) error {
 		default:
 			r.logger.Infof("%x [term: %d] received a %s message with higher term from %x [term: %d]",
 				r.id, r.Term, m.Type, m.From, m.Term)
-			if m.Type == pb.MsgApp || m.Type == pb.MsgHeartbeat || m.Type == pb.MsgSnap {//mike 如果是msgapp、heartbeat、snap三者之一，则变为follower，同时设置lead
+			if m.Type == pb.MsgApp || m.Type == pb.MsgHeartbeat || m.Type == pb.MsgSnap { //mike 如果是msgapp、heartbeat、snap三者之一，则变为follower，同时设置lead
 				r.becomeFollower(m.Term, m.From)
 			} else {
 				r.becomeFollower(m.Term, None)
@@ -898,6 +931,10 @@ func (r *raft) Step(m pb.Message) error {
 			// with "pb.MsgAppResp" of higher term would force leader to step down.
 			// However, this disruption is inevitable to free this stuck node with
 			// fresh election. This can be prevented with Pre-Vote phase.
+			// 收到了一个节点发送过来的更小的term消息。这种情况可能是因为消息的网络延时导致，但是也可能因为该节点由于网络分区导致了它递增了term到一个新的任期。
+			// ，这种情况下该节点不能赢得一次选举，也不能使用旧的任期号重新再加入集群中。如果checkQurom为false，这种情况可以使用递增任期号应答来处理。
+			// 但是如果checkQurom为True，
+			// 此时收到了一个更小的term的节点发出的HB或者APP消息，于是应答一个appresp消息，试图纠正它的状态
 			r.send(pb.Message{To: m.From, Type: pb.MsgAppResp})
 		} else if m.Type == pb.MsgPreVote {
 			// Before Pre-Vote enable, there may have candidate with higher term,
@@ -914,13 +951,15 @@ func (r *raft) Step(m pb.Message) error {
 		return nil
 	}
 	//mike m.Term >= r.Term || m.Term == 0
-	switch m.Type {//检查msg的类型
-	case pb.MsgHup://mike 提升该node的身份
+	switch m.Type { //检查msg的类型
+	case pb.MsgHup: //mike 提升该node的身份
+		// 收到HUP消息，说明准备进行选举
 		if r.state != StateLeader {
 			if !r.promotable() {
 				r.logger.Warningf("%x is unpromotable and can not campaign; ignoring MsgHup", r.id)
 				return nil
 			}
+			//mike 获取已经commit但是还没apply的entries
 			ents, err := r.raftLog.slice(r.raftLog.applied+1, r.raftLog.committed+1, noLimit)
 			if err != nil {
 				r.logger.Panicf("unexpected error getting unapplied entries (%v)", err)
@@ -938,6 +977,7 @@ func (r *raft) Step(m pb.Message) error {
 				r.campaign(campaignPreElection)
 			} else {
 				fmt.Println("at campaignElection")
+				//mike 参见选举
 				r.campaign(campaignElection)
 			}
 		} else {
@@ -945,20 +985,23 @@ func (r *raft) Step(m pb.Message) error {
 		}
 	//mike PreVote算法解决了网络分区节点在重新加入时，会中断集群的问题
 	case pb.MsgVote, pb.MsgPreVote:
-		if r.isLearner {//mike learner不能vote
+		if r.isLearner { //mike learner不能vote
 			// TODO: learner may need to vote, in case of node down when confchange.
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] ignored %s from %x [logterm: %d, index: %d] at term %d: learner can not vote",
 				r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
 			return nil
 		}
 		// We can vote if this is a repeat of a vote we've already cast...
-		canVote := r.Vote == m.From ||//mike 自己可以给自己投票
+		canVote := r.Vote == m.From || //mike 自己可以给自己投票
 			// ...we haven't voted and we don't think there's a leader yet in this term...
 			(r.Vote == None && r.lead == None) || //mike 没选出lead且还未投票
 			// ...or this is a PreVote for a future term...
 			(m.Type == pb.MsgPreVote && m.Term > r.Term)
 		// ...and we believe the candidate is up to date.
 		if canVote && r.raftLog.isUpToDate(m.Index, m.LogTerm) {
+			// 如果当前没有给任何节点投票（r.Vote == None）或者投票的节点term大于本节点的（m.Term > r.Term）
+			// 或者是之前已经投票的节点（r.Vote == m.From）
+			// 同时还满足该节点的消息是最新的（r.raftLog.isUpToDate(m.Index, m.LogTerm)），那么就接收这个节点的投票
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
 				r.id, r.raftLog.lastTerm(), r.raftLog.lastIndex(), r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
 			// When responding to Msg{Pre,}Vote messages we include the term
@@ -976,7 +1019,7 @@ func (r *raft) Step(m pb.Message) error {
 				// Only record real votes.
 				//mike 重置electionElapsed为0
 				r.electionElapsed = 0
-				//mike 记录vote为发送信息者
+				//mike 保存下来给哪个节点投票了
 				r.Vote = m.From
 			}
 		} else {
@@ -998,11 +1041,12 @@ func (r *raft) Step(m pb.Message) error {
 }
 
 type stepFunc func(r *raft, m pb.Message) error
+
 //mike leader的处理函数
 func stepLeader(r *raft, m pb.Message) error {
 	// These message types do not require any progress for m.From.
 	switch m.Type {
-	case pb.MsgBeat://mike 广播心跳
+	case pb.MsgBeat: //mike 广播心跳，leader发送
 		r.bcastHeartbeat()
 		return nil
 	case pb.MsgCheckQuorum:
@@ -1015,7 +1059,7 @@ func stepLeader(r *raft, m pb.Message) error {
 		if pr := r.prs.Progress[r.id]; pr != nil {
 			pr.RecentActive = true
 		}
-		if !r.prs.QuorumActive() {
+		if !r.prs.QuorumActive() { //mike 如果活跃节点数太少
 			r.logger.Warningf("%x stepped down to follower since quorum is not active", r.id)
 			r.becomeFollower(r.Term, None)
 		}
@@ -1031,13 +1075,15 @@ func stepLeader(r *raft, m pb.Message) error {
 		if len(m.Entries) == 0 {
 			r.logger.Panicf("%x stepped empty MsgProp", r.id)
 		}
-		if r.prs.Progress[r.id] == nil {
+		if r.prs.Progress[r.id] == nil { //mike leader被踢出
 			// If we are not currently a member of the range (i.e. this node
 			// was removed from the configuration while serving as leader),
 			// drop any new proposals.
+			// 这里检查本节点是否还在集群以内，如果已经不在集群中了，不处理该消息直接返回。
+			// 这种情况出现在本节点已经通过配置变化被移除出了集群的场景。
 			return ErrProposalDropped
 		}
-		if r.leadTransferee != None {
+		if r.leadTransferee != None { //mike 正在转移leader身份
 			r.logger.Debugf("%x [term %d] transfer leadership to %x is in progress; dropping proposal", r.id, r.Term, r.leadTransferee)
 			return ErrProposalDropped
 		}
@@ -1045,26 +1091,29 @@ func stepLeader(r *raft, m pb.Message) error {
 		for i := range m.Entries {
 			e := &m.Entries[i]
 			if e.Type == pb.EntryConfChange || e.Type == pb.EntryConfChangeV2 {
-				if r.pendingConfIndex > r.raftLog.applied {
+				if r.pendingConfIndex > r.raftLog.applied { //mike 有正在修改的conf
 					r.logger.Infof("%x propose conf %s ignored since pending unapplied configuration [index %d, applied %d]",
 						r.id, e, r.pendingConfIndex, r.raftLog.applied)
+					//mike 将这个数据置空
 					m.Entries[i] = pb.Entry{Type: pb.EntryNormal}
 				} else {
 					r.pendingConfIndex = r.raftLog.lastIndex() + uint64(i) + 1
 				}
 			}
 		}
-
+		//mike 将entries加入到unstable中
 		if !r.appendEntry(m.Entries...) {
 			return ErrProposalDropped
 		}
-		//mike 发送广播
+		//mike 发送广播给其他follower去append
 		r.bcastAppend()
 		return nil
 	case pb.MsgReadIndex:
 		// If more than the local vote is needed, go through a full broadcast,
 		// otherwise optimize.
 		if !r.prs.IsSingleton() {
+			// 这个表达式用于判断是否commttied log索引对应的term是否与当前term不相等，
+			// 如果不相等说明这是一个新的leader，而在它当选之后还没有提交任何数据
 			if r.raftLog.zeroTermOnErrCompacted(r.raftLog.term(r.raftLog.committed)) != r.Term {
 				// Reject read only request when this leader has not committed any log entry at its term.
 				return nil
@@ -1087,7 +1136,7 @@ func stepLeader(r *raft, m pb.Message) error {
 					r.send(pb.Message{To: m.From, Type: pb.MsgReadIndexResp, Index: ri, Entries: m.Entries})
 				}
 			}
-		} else { // only one voting member (the leader) in the cluster
+		} else {                                  // only one voting member (the leader) in the cluster
 			if m.From == None || m.From == r.id { // from leader itself
 				r.readStates = append(r.readStates, ReadState{Index: r.raftLog.committed, RequestCtx: m.Entries[0].Data})
 			} else { // from learner member
@@ -1104,14 +1153,15 @@ func stepLeader(r *raft, m pb.Message) error {
 		r.logger.Debugf("%x no progress available for %x", r.id, m.From)
 		return nil
 	}
-	switch m.Type {//mike 以下多是leader收到的resp信息
-	case pb.MsgAppResp://mike leader接收到append entry的返回
+	switch m.Type { //mike 以下大多是leader收到的resp信息
+	case pb.MsgAppResp: //mike leader接收到append entry的返回
+		// 置位该节点当前是活跃的
 		pr.RecentActive = true
 
-		if m.Reject {//mike append被拒绝
+		if m.Reject { //mike append被拒绝，说明term、index不匹配
 			r.logger.Debugf("%x received MsgAppResp(MsgApp was rejected, lastindex: %d) from %x for index %d",
 				r.id, m.RejectHint, m.From, m.Index)
-			if pr.MaybeDecrTo(m.Index, m.RejectHint) {
+			if pr.MaybeDecrTo(m.Index, m.RejectHint) { // 尝试回退关于该节点的Match、Next索引
 				r.logger.Debugf("%x decreased progress of %x to [%s]", r.id, m.From, pr)
 				if pr.State == tracker.StateReplicate {
 					pr.BecomeProbe()
@@ -1119,6 +1169,7 @@ func stepLeader(r *raft, m pb.Message) error {
 				r.sendAppend(m.From)
 			}
 		} else {
+			//mike leader获取oldpaused参数，确定是否可以继续发送entry给follower
 			oldPaused := pr.IsPaused()
 			if pr.MaybeUpdate(m.Index) {
 				switch {
@@ -1138,8 +1189,10 @@ func stepLeader(r *raft, m pb.Message) error {
 				}
 
 				if r.maybeCommit() {
+					// 如果可以commit日志，那么广播append消息
 					r.bcastAppend() //mike 将entry广播出去，要求follower commit
 				} else if oldPaused {
+					// 如果该节点之前状态是暂停，继续发送append消息给它
 					// If we were paused before, this node may be missing the
 					// latest commit index, so send it.
 					r.sendAppend(m.From)
@@ -1159,7 +1212,7 @@ func stepLeader(r *raft, m pb.Message) error {
 				}
 			}
 		}
-	case pb.MsgHeartbeatResp://mike 心跳包的返回
+	case pb.MsgHeartbeatResp: //mike 心跳包的返回
 		pr.RecentActive = true
 		pr.ProbeSent = false
 
@@ -1188,7 +1241,8 @@ func stepLeader(r *raft, m pb.Message) error {
 				r.send(pb.Message{To: req.From, Type: pb.MsgReadIndexResp, Index: rs.index, Entries: req.Entries})
 			}
 		}
-	case pb.MsgSnapStatus:
+	case pb.MsgSnapStatus: //mike Snapshot -> Probe
+		// 当前该节点状态已经不是在接受快照的状态了，直接返回
 		if pr.State != tracker.StateSnapshot {
 			return nil
 		}
@@ -1210,20 +1264,21 @@ func stepLeader(r *raft, m pb.Message) error {
 		// out the next MsgApp.
 		// If snapshot failure, wait for a heartbeat interval before next try
 		pr.ProbeSent = true
-	case pb.MsgUnreachable:
+	case pb.MsgUnreachable: //mike Replicate -> Probe
 		// During optimistic replication, if the remote becomes unreachable,
 		// there is huge probability that a MsgApp is lost.
 		if pr.State == tracker.StateReplicate {
 			pr.BecomeProbe()
 		}
 		r.logger.Debugf("%x failed to send message to %x because it is unreachable [%s]", r.id, m.From, pr)
-	case pb.MsgTransferLeader:
-		if pr.IsLearner {//learner不能变成leader
+	case pb.MsgTransferLeader: //mike leader身份交给另一个节点
+		if pr.IsLearner { //learner不能变成leader
 			r.logger.Debugf("%x is learner. Ignored transferring leadership", r.id)
 			return nil
 		}
 		leadTransferee := m.From
 		lastLeadTransferee := r.leadTransferee
+		//mike 检查是否有正在transfer的请求
 		if lastLeadTransferee != None {
 			if lastLeadTransferee == leadTransferee {
 				r.logger.Infof("%x [term %d] transfer leadership to %x is in progress, ignores request to same node %x",
@@ -1251,6 +1306,7 @@ func stepLeader(r *raft, m pb.Message) error {
 	}
 	return nil
 }
+
 //mike 候选人的处理函数
 // stepCandidate is shared by StateCandidate and StatePreCandidate; the difference is
 // whether they respond to MsgVoteResp or MsgPreVoteResp.
@@ -1265,32 +1321,34 @@ func stepCandidate(r *raft, m pb.Message) error {
 		myVoteRespType = pb.MsgVoteResp
 	}
 	switch m.Type {
-	case pb.MsgProp:
+	case pb.MsgProp: //mike leader都还没有，不能处理proposal
 		r.logger.Infof("%x no leader at term %d; dropping proposal", r.id, r.Term)
 		return ErrProposalDropped
-	case pb.MsgApp:
+	case pb.MsgApp: //mike leader才能发送的信号
 		r.becomeFollower(m.Term, m.From) // always m.Term == r.Term
-		r.handleAppendEntries(m) //mike 处理entries的添加
+		r.handleAppendEntries(m)         //mike 处理entries的添加
 	case pb.MsgHeartbeat:
 		r.becomeFollower(m.Term, m.From) // always m.Term == r.Term
-		r.handleHeartbeat(m) //mike 处理leader发来的心跳包
-	case pb.MsgSnap:
+		r.handleHeartbeat(m)             //mike 处理leader发来的心跳包
+	case pb.MsgSnap: //mike 用snapshot恢复自己的状态机
 		r.becomeFollower(m.Term, m.From) // always m.Term == r.Term
 		r.handleSnapshot(m)
 	case myVoteRespType:
-		//mike 保存别的node发来的选举信息
+		//mike 保存别的node发来的选举信息，每收到一个resp就会检查一次投票结果
 		gr, rj, res := r.poll(m.From, m.Type, !m.Reject)
 		r.logger.Infof("%x has received %d %s votes and %d vote rejections", r.id, gr, m.Type, rj)
 		switch res {
-		case quorum.VoteWon:
+		case quorum.VoteWon: //mike 竞选成功
 			if r.state == StatePreCandidate {
 				r.campaign(campaignElection)
 			} else {
 				//mike 成为leader
 				r.becomeLeader()
+				//mike 发送append的msg
+				//mike 发送空的附加日志 RPC（心跳）给其他所有的服务器
 				r.bcastAppend()
 			}
-		case quorum.VoteLost:
+		case quorum.VoteLost: //mike 竞选失败
 			// pb.MsgPreVoteResp contains future term of pre-candidate
 			// m.Term > r.Term; reuse r.Term
 			r.becomeFollower(r.Term, None)
@@ -1300,6 +1358,7 @@ func stepCandidate(r *raft, m pb.Message) error {
 	}
 	return nil
 }
+
 //mike follower的处理函数
 func stepFollower(r *raft, m pb.Message) error {
 	switch m.Type {
@@ -1311,25 +1370,27 @@ func stepFollower(r *raft, m pb.Message) error {
 			r.logger.Infof("%x not forwarding to leader %x at term %d; dropping proposal", r.id, r.lead, r.Term)
 			return ErrProposalDropped
 		}
+		//mike m转给leader
 		m.To = r.lead
 		r.send(m)
 	case pb.MsgApp:
-		r.electionElapsed = 0 //mike 重置超时计数器
-		r.lead = m.From //mike 设置leader为消息来源的id
+		r.electionElapsed = 0    //mike 重置超时计数器
+		r.lead = m.From          //mike 设置leader为消息来源的id
 		r.handleAppendEntries(m) //mike 对m执行append操作
 	case pb.MsgHeartbeat:
 		r.electionElapsed = 0
 		r.lead = m.From
-		r.handleHeartbeat(m)
+		r.handleHeartbeat(m) //mike 回应leader的心跳请求
 	case pb.MsgSnap:
 		r.electionElapsed = 0
 		r.lead = m.From
-		r.handleSnapshot(m)
+		r.handleSnapshot(m) //mike 回应leader的snapshot请求
 	case pb.MsgTransferLeader:
 		if r.lead == None {
 			r.logger.Infof("%x no leader at term %d; dropping leader transfer msg", r.id, r.Term)
 			return nil
 		}
+		// 向leader转发leader转让消息
 		m.To = r.lead
 		r.send(m)
 	case pb.MsgTimeoutNow:
@@ -1338,6 +1399,7 @@ func stepFollower(r *raft, m pb.Message) error {
 			// Leadership transfers never use pre-vote even if r.preVote is true; we
 			// know we are not recovering from a partition so there is no need for the
 			// extra round trip.
+			//mike 开始竞选
 			r.campaign(campaignTransfer)
 		} else {
 			r.logger.Infof("%x received MsgTimeoutNow from %x but is not promotable", r.id, m.From)
@@ -1358,14 +1420,17 @@ func stepFollower(r *raft, m pb.Message) error {
 	}
 	return nil
 }
+
 //mike follower处理entries的添加
 func (r *raft) handleAppendEntries(m pb.Message) {
-	if m.Index < r.raftLog.committed {
+	if m.Index < r.raftLog.committed { //mike raftlog中已经有最新的了，不用append
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed})
 		return
 	}
 
 	if mlastIndex, ok := r.raftLog.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...); ok {
+		//mike append entry
+		//mike 注意这里的mlastIndex
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: mlastIndex})
 	} else {
 		//mike 拒绝append entry
@@ -1374,12 +1439,14 @@ func (r *raft) handleAppendEntries(m pb.Message) {
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: m.Index, Reject: true, RejectHint: r.raftLog.lastIndex()})
 	}
 }
+
 //mike 供candidate和follower调用的处理leader心跳的函数
 func (r *raft) handleHeartbeat(m pb.Message) {
 	r.raftLog.commitTo(m.Commit)
-	//mike 返回消息给leader
+	//mike 返回心跳的消息给leader
 	r.send(pb.Message{To: m.From, Type: pb.MsgHeartbeatResp, Context: m.Context})
 }
+
 //mike follower处理snapshot的请求
 func (r *raft) handleSnapshot(m pb.Message) {
 	sindex, sterm := m.Snapshot.Metadata.Index, m.Snapshot.Metadata.Term
@@ -1388,12 +1455,14 @@ func (r *raft) handleSnapshot(m pb.Message) {
 			r.id, r.raftLog.committed, sindex, sterm)
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.lastIndex()})
 	} else {
+		//mike 忽视snapshot
 		r.logger.Infof("%x [commit: %d] ignored snapshot [index: %d, term: %d]",
 			r.id, r.raftLog.committed, sindex, sterm)
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed})
 	}
 }
-//mike follower处理从snapshot中恢复状态机
+
+//mike follower从snapshot中恢复状态机
 // restore recovers the state machine from a snapshot. It restores the log and the
 // configuration of state machine. If this method returns false, the snapshot was
 // ignored, either because it was obsolete or because of an error.
@@ -1465,13 +1534,16 @@ func (r *raft) restore(s pb.Snapshot) bool {
 		r.id, r.raftLog.committed, r.raftLog.lastIndex(), r.raftLog.lastTerm(), s.Metadata.Index, s.Metadata.Term)
 	return true
 }
+
 //mike 检查该node是否可以提权，其中progress中维护了集群中node信息的hash表
 // promotable indicates whether state machine can be promoted to leader,
 // which is true when its own id is in progress list.
 func (r *raft) promotable() bool {
+	// 在prs数组中找到本节点，说明该节点在集群中，这就具备了可以被选为leader的条件
 	pr := r.prs.Progress[r.id]
 	return pr != nil && !pr.IsLearner
 }
+
 //mike 直接修改集群的配置信息
 func (r *raft) applyConfChange(cc pb.ConfChangeV2) pb.ConfState {
 	cfg, prs, err := func() (tracker.Config, tracker.ProgressMap, error) {
@@ -1541,6 +1613,7 @@ func (r *raft) applyConfChange(cc pb.ConfChangeV2) pb.ConfState {
 
 	return cs
 }
+
 //mike hardstate不等的情况下进行load
 func (r *raft) loadState(state pb.HardState) {
 	if state.Commit < r.raftLog.committed || state.Commit > r.raftLog.lastIndex() {

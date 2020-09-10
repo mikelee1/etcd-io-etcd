@@ -60,6 +60,7 @@ type Peer interface {
 	// and has no promise that the message will be received by the remote.
 	// When it fails to send message out, it will report the status to underlying
 	// raft.
+	//mike 发送msg给peer
 	send(m raftpb.Message)
 
 	// sendSnap sends the merged snapshot message to the remote peer. Its behavior
@@ -105,7 +106,7 @@ type peer struct {
 	status *peerStatus
 
 	picker *urlPicker
-
+	//mike peers之间信道
 	msgAppV2Writer *streamWriter
 	writer         *streamWriter
 	pipeline       *pipeline

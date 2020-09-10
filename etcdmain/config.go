@@ -74,7 +74,7 @@ type configProxy struct {
 	ProxyJSON              string `json:"proxy"`
 	FallbackJSON           string `json:"discovery-fallback"`
 }
-
+//mike etcd所有的config
 // config holds the config for a command line invocation of etcd
 type config struct {
 	ec           embed.Config

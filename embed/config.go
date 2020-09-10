@@ -112,7 +112,7 @@ var (
 func init() {
 	defaultHostname, defaultHostStatus = netutil.GetDefaultHost()
 }
-
+//mike etcd server的一些配置
 // Config holds the arguments for configuring an etcd server.
 type Config struct {
 	Name   string `json:"name"`

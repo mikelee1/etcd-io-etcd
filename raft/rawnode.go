@@ -16,10 +16,8 @@ package raft
 
 import (
 	"errors"
-
 	pb "go.etcd.io/etcd/raft/raftpb"
 	"go.etcd.io/etcd/raft/tracker"
-	"fmt"
 )
 
 // ErrStepLocalMsg is returned when try to step a local raft message
@@ -28,6 +26,7 @@ var ErrStepLocalMsg = errors.New("raft: cannot step raft local message")
 // ErrStepPeerNotFound is returned when try to step a response message
 // but there is no peer found in raft.prs for that node.
 var ErrStepPeerNotFound = errors.New("raft: cannot step as peer not found")
+
 //mike rawnode是线程非安全的
 // RawNode is a thread-unsafe Node.
 // The methods of this struct correspond to the methods of Node and are described
@@ -55,6 +54,7 @@ func NewRawNode(config *Config) (*RawNode, error) {
 	rn := &RawNode{
 		raft: r,
 	}
+	//mike 导入之前的状态
 	rn.prevSoftSt = r.softState()
 	rn.prevHardSt = r.hardState()
 	return rn, nil
@@ -76,6 +76,7 @@ func (rn *RawNode) Tick() {
 func (rn *RawNode) TickQuiesced() {
 	rn.raft.electionElapsed++
 }
+
 //mike 转为候选人模式
 // Campaign causes this RawNode to transition to candidate state.
 func (rn *RawNode) Campaign() error {
@@ -83,6 +84,7 @@ func (rn *RawNode) Campaign() error {
 		Type: pb.MsgHup,
 	})
 }
+
 //mike 向raft集群发送提议
 // Propose proposes data be appended to the raft log.
 func (rn *RawNode) Propose(data []byte) error {
@@ -136,7 +138,7 @@ func (rn *RawNode) Ready() Ready {
 // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
 // is no obligation that the Ready must be handled.
 func (rn *RawNode) readyWithoutAccept() Ready {
-	fmt.Println("in readyWithoutAccept")
+	//fmt.Println("in readyWithoutAccept")
 	return newReady(rn.raft, rn.prevSoftSt, rn.prevHardSt)
 }
 
@@ -157,20 +159,28 @@ func (rn *RawNode) acceptReady(rd Ready) {
 // Checking logic in this method should be consistent with Ready.containsUpdates().
 func (rn *RawNode) HasReady() bool {
 	r := rn.raft
+	//mike 如果软状态有变化
 	if !r.softState().equal(rn.prevSoftSt) {
+		//fmt.Println(1)
 		return true
 	}
+	//mike 如果硬状态存在且有变化
 	if hardSt := r.hardState(); !IsEmptyHardState(hardSt) && !isHardStateEqual(hardSt, rn.prevHardSt) {
+		//fmt.Println(2)
 		return true
 	}
 	if r.raftLog.unstable.snapshot != nil && !IsEmptySnap(*r.raftLog.unstable.snapshot) {
+		//fmt.Println(3)
 		return true
 	}
+	//mike 如果msgs大于0个，就是ready了
 	if len(r.msgs) > 0 || len(r.raftLog.unstableEntries()) > 0 || r.raftLog.hasNextEnts() {
-		fmt.Println("hasready: len(r.msgs) is ",len(r.msgs))
+		//fmt.Println(4)
+		//fmt.Println("hasready: len(r.msgs) is ",len(r.msgs))
 		return true
 	}
 	if len(r.readStates) != 0 {
+		//fmt.Println(5)
 		return true
 	}
 	return false
@@ -182,7 +192,7 @@ func (rn *RawNode) Advance(rd Ready) {
 	if !IsEmptyHardState(rd.HardState) {
 		rn.prevHardSt = rd.HardState
 	}
-	rn.raft.advance(rd)//mike 用来append entries
+	rn.raft.advance(rd) //mike 用来append entries
 }
 
 // Status returns the current status of the given group. This allocates, see

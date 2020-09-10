@@ -29,18 +29,22 @@ type raftLog struct {
 	//            applied\committed
 
 	// storage contains all stable entries since the last snapshot.
+	// 用于保存自从最后一次snapshot之后提交的数据
 	storage Storage
-
+	//mike 非稳定态的日志存储
 	// unstable contains all unstable entries and snapshot.
 	// they will be saved into storage.
+	// 用于保存还没有持久化的数据和快照，这些数据最终都会保存到storage中
 	unstable unstable
-	//mike storage中存储的稳定log最大index值
+	//mike storage中存储的稳定log最大index值，这些log已经被大多数节点确认
 	// committed is the highest log position that is known to be in
 	// stable storage on a quorum of nodes.
 	committed uint64
+	//mike 已经应用到状态机中的最高index
 	// applied is the highest log position that the application has
 	// been instructed to apply to its state machine.
 	// Invariant: applied <= committed
+	// 即一条日志首先要提交成功（即committed），才能被applied到状态机中
 	applied uint64
 
 	logger Logger
@@ -76,9 +80,11 @@ func newLogWithSize(storage Storage, logger Logger, maxNextEntsSize uint64) *raf
 	if err != nil {
 		panic(err) // TODO(bdarnell)
 	}
+	// offset从持久化之后的最后一个index的下一个开始
 	log.unstable.offset = lastIndex + 1
 	log.unstable.logger = logger
 	// Initialize our committed and applied pointers to the time of the last compaction.
+	// committed和applied从持久化的第一个index的前一个开始
 	log.committed = firstIndex - 1
 	log.applied = firstIndex - 1
 
@@ -88,24 +94,30 @@ func newLogWithSize(storage Storage, logger Logger, maxNextEntsSize uint64) *raf
 func (l *raftLog) String() string {
 	return fmt.Sprintf("committed=%d, applied=%d, unstable.offset=%d, len(unstable.Entries)=%d", l.committed, l.applied, l.unstable.offset, len(l.unstable.entries))
 }
-
+//mike append entries到raftlog
 // maybeAppend returns (0, false) if the entries cannot be appended. Otherwise,
 // it returns (last index of new entries, true).
 func (l *raftLog) maybeAppend(index, logTerm, committed uint64, ents ...pb.Entry) (lastnewi uint64, ok bool) {
+	//mike 根据msg里的index找到本地raftlog中日志的term，比较这个term和msg中的term是否一致
+	//mike 主要是为了校验发送方和接收方在index处的term是否一致
 	if l.matchTerm(index, logTerm) {
 		lastnewi = index + uint64(len(ents))
+		//mike 查找ents中最早开始冲突的index
 		ci := l.findConflict(ents)
 		switch {
 		case ci == 0:
 		case ci <= l.committed:
+			// 找到的数据索引小于committed，这说明传入的数据是错误的
 			l.logger.Panicf("entry %d conflict with committed entry [committed(%d)]", ci, l.committed)
 		default:
 			offset := index + 1
+			//mike 从查找到的数据索引开始，将这之后的数据放入到unstable存储中
 			l.append(ents[ci-offset:]...)
 		}
 		l.commitTo(min(committed, lastnewi))
 		return lastnewi, true
 	}
+	//mike 如果index的term就不同
 	return 0, false
 }
 
@@ -131,6 +143,7 @@ func (l *raftLog) append(ents ...pb.Entry) uint64 {
 // a different term.
 // The first entry MUST have an index equal to the argument 'from'.
 // The index of the given entries MUST be continuously increasing.
+//mike 检查entries中每一个entry的term是否match
 func (l *raftLog) findConflict(ents []pb.Entry) uint64 {
 	for _, ne := range ents {
 		if !l.matchTerm(ne.Index, ne.Term) {
@@ -203,11 +216,11 @@ func (l *raftLog) lastIndex() uint64 {
 	}
 	return i
 }
-
+//mike 修改raftlog的committed为tocommit
 func (l *raftLog) commitTo(tocommit uint64) {
 	// never decrease commit
 	if l.committed < tocommit {
-		if l.lastIndex() < tocommit {
+		if l.lastIndex() < tocommit {//mike tocommit超出了log的最后一个index
 			l.logger.Panicf("tocommit(%d) is out of range [lastIndex(%d)]. Was the raft log corrupted, truncated, or lost?", tocommit, l.lastIndex())
 		}
 		l.committed = tocommit
@@ -243,15 +256,16 @@ func (l *raftLog) term(i uint64) (uint64, error) {
 		// TODO: return an error instead?
 		return 0, nil
 	}
-
+	//mike 从unstable中查找index的term
 	if t, ok := l.unstable.maybeTerm(i); ok {
 		return t, nil
 	}
-
+	//mike 从storage中查找index的term
 	t, err := l.storage.Term(i)
 	if err == nil {
 		return t, nil
 	}
+	// 只有这两种错可以接受
 	if err == ErrCompacted || err == ErrUnavailable {
 		return 0, err
 	}
@@ -284,6 +298,7 @@ func (l *raftLog) allEntries() []pb.Entry {
 // later term is more up-to-date. If the logs end with the same term, then
 // whichever log has the larger lastIndex is more up-to-date. If the logs are
 // the same, the given log is up-to-date.
+// 判断是否比当前节点的日志更新：1）term是否更大 2）term相同的情况下，索引是否更大
 func (l *raftLog) isUpToDate(lasti, term uint64) bool {
 	return term > l.lastTerm() || (term == l.lastTerm() && lasti >= l.lastIndex())
 }

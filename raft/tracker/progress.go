@@ -20,6 +20,7 @@ import (
 	"strings"
 )
 
+// 该数据结构用于在leader中保存每个follower的状态信息，leader将根据这些信息决定发送给节点的日志
 // Progress represents a follower’s progress in the view of the leader. Leader
 // maintains progresses of all followers, and sends entries to the follower
 // based on its progress.
@@ -28,6 +29,20 @@ import (
 // strewn around `*raft.raft`. Additionally, some fields are only used when in a
 // certain State. All of this isn't ideal.
 type Progress struct {
+	// 要使得 follower 的日志跟自己一致，leader 必须找到两者达成一致的最大的日志条目（索引最大），
+	// 删除 follower 日志中从那个点之后的所有日志条目，并且将自己从那个点之后的所有日志条目发送给 follower 。
+
+	// Next保存的是下一次leader发送append消息时传送过来的日志索引
+	// 当选举出新的leader时，首先初始化Next为该leader最后一条日志+1
+	// 如果向该节点append日志失败，则递减Next回退日志，一直回退到索引匹配为止
+
+	// Match保存在该节点上保存的日志的最大索引，初始化为0
+	// 正常情况下，Next = Match + 1
+	// 以下情况下不是上面这种情况：
+	// 1. 切换到Probe状态时，如果上一个状态是Snapshot状态，即正在接收快照，那么Next = max(pr.Match+1, pendingSnapshot+1)
+	// 2. 当该follower不在Replicate状态时，说明不是正常的接收副本状态。
+	//    此时当leader与follower同步leader上的日志时，可能出现覆盖的情况，即此时follower上面假设Match为3，但是索引为3的数据会被
+	//    leader覆盖，此时Next指针可能会一直回溯到与leader上日志匹配的位置，再开始正常同步日志，此时也会出现Next != Match + 1的情况出现
 	Match, Next uint64
 	// State defines how the leader should interact with the follower.
 	//
@@ -40,6 +55,7 @@ type Progress struct {
 	//
 	// When in StateSnapshot, leader should have sent out snapshot
 	// before and stops sending any replication message.
+	//mike follower的状态，probe、replicate、snapshot三种状态
 	State StateType
 
 	// PendingSnapshot is used in StateSnapshot.
@@ -52,11 +68,13 @@ type Progress struct {
 	// RecentActive is true if the progress is recently active. Receiving any messages
 	// from the corresponding follower indicates the progress is active.
 	// RecentActive can be reset to false after an election timeout.
+	//mike follower是否活跃
 	RecentActive bool
 
 	// ProbeSent is used while this follower is in StateProbe. When ProbeSent is
 	// true, raft should pause sending replication message to this peer until
 	// ProbeSent is reset. See ProbeAcked() and IsPaused().
+	//mike probe情况下，通过该flag保证一次只发送一个msg给follower
 	ProbeSent bool
 
 	// Inflights is a sliding window for the inflight messages.
@@ -200,6 +218,7 @@ func (pr *Progress) MaybeDecrTo(rejected, last uint64) bool {
 // operation, this is false. A throttled node will be contacted less frequently
 // until it has reached a state in which it's able to accept a steady stream of
 // log entries again.
+//mike leader发向该follower的log是否需要控制
 func (pr *Progress) IsPaused() bool {
 	switch pr.State {
 	case StateProbe:
@@ -236,7 +255,7 @@ func (pr *Progress) String() string {
 	}
 	return buf.String()
 }
-//mike leader视角下的各个follower中的progress
+//mike leader视角下的各个follower中的progress，
 // ProgressMap is a map of *Progress.
 type ProgressMap map[uint64]*Progress
 

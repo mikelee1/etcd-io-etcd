@@ -313,6 +313,7 @@ func (m *Message) String() string            { return proto.CompactTextString(m)
 func (*Message) ProtoMessage()               {}
 func (*Message) Descriptor() ([]byte, []int) { return fileDescriptorRaft, []int{3} }
 
+//mike 硬状态，包含term，vote结果和commit
 type HardState struct {
 	Term             uint64 `protobuf:"varint,1,opt,name=term" json:"term"`
 	Vote             uint64 `protobuf:"varint,2,opt,name=vote" json:"vote"`

@@ -26,8 +26,8 @@ import (
 
 // a key-value store backed by raft
 type kvstore struct {
-	proposeC    chan<- string // channel for proposing updates
-	mu          sync.RWMutex
+	proposeC chan<- string // channel for proposing updates
+	mu       sync.RWMutex
 	//mike 保存提交的kv值，供get和put
 	kvStore     map[string]string // current committed key-value pairs
 	snapshotter *snap.Snapshotter
@@ -63,6 +63,7 @@ func (s *kvstore) Propose(k string, v string) {
 }
 
 func (s *kvstore) readCommits(commitC <-chan *string, errorC <-chan error) {
+	//mike commitC是要提交的修改
 	for data := range commitC {
 		if data == nil {
 			// done replaying log; new data incoming

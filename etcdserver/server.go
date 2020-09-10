@@ -198,7 +198,7 @@ type EtcdServer struct {
 	consistIndex consistentIndex // must use atomic operations to access; keep 64-bit aligned.
 	//mike server和raft交流的实例
 	r            raftNode        // uses 64-bit atomics; keep 64-bit aligned.
-
+	//mike 集群启动成功的chan
 	readych chan struct{}
 	Cfg     ServerConfig
 
@@ -280,7 +280,7 @@ type EtcdServer struct {
 
 	*AccessController
 }
-
+//mike 启动一个etcd server
 // NewServer creates a new EtcdServer from the supplied configuration. The
 // configuration is considered static for the lifetime of the EtcdServer.
 func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
@@ -371,8 +371,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl.SetID(types.ID(0), existingCluster.ID())
 		cl.SetStore(st)
 		cl.SetBackend(be)
-		//mike peers为nil
-		id, n, s, w = startNode(cfg, cl, nil)
+		id, n, s, w = startNode(cfg, cl, nil)//mike peers为nil
 		cl.SetID(id, existingCluster.ID())
 
 	case !haveWAL && cfg.NewCluster://mike 没有wal并且是新cluster
@@ -745,6 +744,7 @@ func (s *EtcdServer) adjustTicks() {
 func (s *EtcdServer) Start() {
 	s.start()
 	s.goAttach(func() { s.adjustTicks() })
+	//mike 在集群中注册自己
 	s.goAttach(func() { s.publish(s.Cfg.ReqTimeout()) })
 	s.goAttach(s.purgeFile)
 	s.goAttach(func() { monitorFileDescriptor(s.getLogger(), s.stopping) })
@@ -928,7 +928,7 @@ type raftReadyHandler struct {
 //mike 开启etcd server
 func (s *EtcdServer) run() {
 	lg := s.getLogger()
-
+	//mike 获取历史的snapshot
 	sn, err := s.r.raftStorage.Snapshot()
 	if err != nil {
 		if lg != nil {
@@ -956,6 +956,7 @@ func (s *EtcdServer) run() {
 		smu.RUnlock()
 		return
 	}
+	//mike raft的处理函数
 	rh := &raftReadyHandler{
 		getLead:    func() (lead uint64) { return s.getLead() },
 		updateLead: func(lead uint64) { s.setLead(lead) },
@@ -1000,7 +1001,7 @@ func (s *EtcdServer) run() {
 			}
 		},
 	}
-	//mike raftnode start
+	//mike raftnode start，处理raft发来的msg，apply内存的事情在下面的协程中
 	s.r.start(rh)
 
 	ep := etcdProgress{
@@ -1044,6 +1045,7 @@ func (s *EtcdServer) run() {
 		if s.compactor != nil {
 			s.compactor.Stop()
 		}
+		//mike server异常退出
 		close(s.done)
 	}()
 
@@ -1051,14 +1053,14 @@ func (s *EtcdServer) run() {
 	if s.lessor != nil {
 		expiredLeaseC = s.lessor.ExpiredLeasesC()
 	}
-
+	//mike etcd server端在此处理apply之类的事情，区别于上面的start方法
 	for {
 		select {
 		case ap := <-s.r.apply()://mike raft的applyc，这里的apply其实是server传给raft共识以后的msg
 			for _, v := range ap.entries{
 				go tickprint.Print(v.Type,"got raft apply: "+string(v.Data))
 			}
-
+			//mike f中会触发snapshot创建
 			f := func(context.Context) { s.applyAll(&ep, &ap) }
 			sched.Schedule(f)
 		case leases := <-expiredLeaseC:
@@ -1123,7 +1125,7 @@ func (s *EtcdServer) applyAll(ep *etcdProgress, apply *apply) {
 	// snapshot. or applied index might be greater than the last index in raft
 	// storage, since the raft routine might be slower than apply routine.
 	<-apply.notifyc
-
+	//mike 触发snapshot
 	s.triggerSnapshot(ep)
 	select {
 	// snapshot requested via send()
@@ -1410,7 +1412,7 @@ func (s *EtcdServer) triggerSnapshot(ep *etcdProgress) {
 	} else {
 		plog.Infof("start to snapshot (applied: %d, lastsnap: %d)", ep.appliedi, ep.snapi)
 	}
-
+	//mike 创建snapshot
 	s.snapshot(ep.appliedi, ep.confState)
 	ep.snapi = ep.appliedi
 }

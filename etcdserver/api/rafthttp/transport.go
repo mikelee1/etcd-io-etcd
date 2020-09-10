@@ -32,7 +32,6 @@ import (
 	"github.com/xiang90/probing"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
-	"fmt"
 )
 
 var plog = logutil.NewMergeLogger(capnslog.NewPackageLogger("go.etcd.io/etcd", "rafthttp"))
@@ -64,6 +63,7 @@ type Transporter interface {
 	Send(m []raftpb.Message)
 	// SendSnapshot sends out the given snapshot message to a remote peer.
 	// The behavior of SendSnapshot is similar to Send.
+	//mike 发送snapshot请求给peer
 	SendSnapshot(m snap.Message)
 	//mike 新加入节点根据remote去catch up
 	// AddRemote adds a remote with given peer urls into the transport.
@@ -163,12 +163,13 @@ func (t *Transport) Start() error {
 	}
 	return nil
 }
-
+//mike 处理peer发来的请求
 func (t *Transport) Handler() http.Handler {
 	pipelineHandler := newPipelineHandler(t, t.Raft, t.ClusterID)
 	streamHandler := newStreamHandler(t, t, t.Raft, t.ID, t.ClusterID)
 	snapHandler := newSnapshotHandler(t, t.Raft, t.Snapshotter, t.ClusterID)
 	mux := http.NewServeMux()
+	//mike peer发来的msg在这里进行路由处理
 	mux.Handle(RaftPrefix, pipelineHandler)
 	mux.Handle(RaftStreamPrefix+"/", streamHandler)
 	mux.Handle(RaftSnapshotPrefix, snapHandler)
@@ -184,7 +185,7 @@ func (t *Transport) Get(id types.ID) Peer {
 
 func (t *Transport) Send(msgs []raftpb.Message) {
 	for _, m := range msgs {
-		fmt.Println("send msg: ",m.From,m.To)
+		//fmt.Println("send msg: ",m.From,m.To)
 		if m.To == 0 {
 			// ignore intentionally dropped message
 			continue

@@ -58,6 +58,7 @@ func (c JointConfig) CommittedIndex(l AckedIndexer) Index {
 // VoteResult takes a mapping of voters to yes/no (true/false) votes and returns
 // a result indicating whether the vote is pending, lost, or won. A joint quorum
 // requires both majority quorums to vote in favor.
+//mike 检查旧的和新的集群的投票结果
 func (c JointConfig) VoteResult(votes map[uint64]bool) VoteResult {
 	r1 := c[0].VoteResult(votes)
 	r2 := c[1].VoteResult(votes)

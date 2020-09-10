@@ -25,10 +25,11 @@ import (
 
 // Handler for a http based key-value store backed by raft
 type httpKVAPI struct {
-	store       *kvstore
+	store *kvstore
 	//mike 接收用户端的配置修改
 	confChangeC chan<- raftpb.ConfChange
 }
+
 //mike 只要实现了ServeHTTP就可被当作server handler
 func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.RequestURI
@@ -48,6 +49,7 @@ func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// committed so a subsequent GET on the key may return old value
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == "GET":
+		//mike 从kv store中查找表
 		if v, ok := h.store.Lookup(key); ok {
 			w.Write([]byte(v))
 		} else {
@@ -112,6 +114,7 @@ func serveHttpKVAPI(kv *kvstore, port int, confChangeC chan<- raftpb.ConfChange,
 		},
 	}
 	go func() {
+		//mike 监听服务
 		if err := srv.ListenAndServe(); err != nil {
 			log.Fatal(err)
 		}

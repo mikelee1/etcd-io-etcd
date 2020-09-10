@@ -116,7 +116,7 @@ func (in *Inflights) FreeLE(to uint64) {
 // FreeFirstOne releases the first inflight. This is a no-op if nothing is
 // inflight.
 func (in *Inflights) FreeFirstOne() { in.FreeLE(in.buffer[in.start]) }
-
+//mike inflights到达发送上限
 // Full returns true if no more messages can be sent at the moment.
 func (in *Inflights) Full() bool {
 	return in.count == in.size

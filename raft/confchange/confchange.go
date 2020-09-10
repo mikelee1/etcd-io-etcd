@@ -180,7 +180,7 @@ func (c Changer) apply(cfg *tracker.Config, prs tracker.ProgressMap, ccs ...pb.C
 	}
 	return nil
 }
-
+//mike 添加一个voter
 // makeVoter adds or promotes the given ID to be a voter in the incoming
 // majority config.
 func (c Changer) makeVoter(cfg *tracker.Config, prs tracker.ProgressMap, id uint64) {
@@ -196,7 +196,7 @@ func (c Changer) makeVoter(cfg *tracker.Config, prs tracker.ProgressMap, id uint
 	incoming(cfg.Voters)[id] = struct{}{}
 	return
 }
-
+//mike 添加一个learner
 // makeLearner makes the given ID a learner or stages it to be a learner once
 // an active joint configuration is exited.
 //
@@ -235,7 +235,7 @@ func (c Changer) makeLearner(cfg *tracker.Config, prs tracker.ProgressMap, id ui
 		nilAwareAdd(&cfg.Learners, id)
 	}
 }
-
+//mike 删除一个节点
 // remove this peer as a voter or learner from the incoming config.
 func (c Changer) remove(cfg *tracker.Config, prs tracker.ProgressMap, id uint64) {
 	if _, ok := prs[id]; !ok {

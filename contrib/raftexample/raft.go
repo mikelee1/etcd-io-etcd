@@ -85,9 +85,11 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 	errorC := make(chan error)
 
 	rc := &raftNode{
-		proposeC:    proposeC,
+		//mike server -> raftnode
+		proposeC: proposeC,
 		//mike 这个confchangec的流入是restapi那里
 		confChangeC: confChangeC,
+		//mike server <- raftnode
 		commitC:     commitC,
 		errorC:      errorC,
 		id:          id,
@@ -223,6 +225,7 @@ func (rc *raftNode) openWAL(snapshot *raftpb.Snapshot) *wal.WAL {
 
 	return w
 }
+
 //mike 利用snapshot对storage进行重放
 // replayWAL replays WAL entries into the raft instance.
 func (rc *raftNode) replayWAL() *wal.WAL {
@@ -241,7 +244,7 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 	rc.raftStorage.SetHardState(st)
 
 	// append to storage so raft starts at the right place in log
-	rc.raftStorage.Append(ents)//mike 载入entries
+	rc.raftStorage.Append(ents) //mike 载入entries
 	// send nil once lastIndex is published so client knows commit channel is current
 	if len(ents) > 0 {
 		rc.lastIndex = ents[len(ents)-1].Index
@@ -292,6 +295,7 @@ func (rc *raftNode) startRaft() {
 		if rc.join {
 			startPeers = nil
 		}
+		//mike 启动多个节点
 		rc.node = raft.StartNode(c, startPeers)
 	}
 
@@ -379,6 +383,7 @@ func (rc *raftNode) maybeTriggerSnapshot() {
 	log.Printf("compacted log at index %d", compactIndex)
 	rc.snapshotIndex = rc.appliedIndex
 }
+
 //mike etcd server端的处理
 func (rc *raftNode) serveChannels() {
 	snap, err := rc.raftStorage.Snapshot()
@@ -409,7 +414,7 @@ func (rc *raftNode) serveChannels() {
 					rc.node.Propose(context.TODO(), []byte(prop))
 				}
 
-			case cc, ok := <-rc.confChangeC://mike 收到add或者delete node的请求
+			case cc, ok := <-rc.confChangeC: //mike 收到add或者delete node的请求
 				if !ok {
 					rc.confChangeC = nil
 				} else {

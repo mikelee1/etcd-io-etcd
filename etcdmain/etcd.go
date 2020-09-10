@@ -55,7 +55,7 @@ var (
 
 func startEtcdOrProxyV2() {
 	grpc.EnableTracing = false
-	//mike 新建一个config句柄
+	//mike 新建一个config句柄，后面的新建集群和节点都会用到
 	cfg := newConfig()
 	//mike default=http://localhost:2380
 	defaultInitialCluster := cfg.ec.InitialCluster
@@ -157,7 +157,7 @@ func startEtcdOrProxyV2() {
 				plog.Panicf("unhandled dir type %v", which)
 			}
 		}
-	} else {
+	} else {//mike empty
 		shouldProxy := cfg.isProxy()
 		if !shouldProxy {
 			stopped, errc, err = startEtcd(&cfg.ec)
